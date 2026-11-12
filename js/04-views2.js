@@ -236,6 +236,7 @@ VIEWS.settings = () => {
 VIEWS.data = () => {
   const n = state.tasks.length;
   let body = '';
+  if (IS_PWA) body += `<div class="banner ${Offline.ready ? '' : 'warn'}" style="margin-top:6px">${ic(Offline.ready ? 'check' : 'info')}<div class="grow">${Offline.ready ? '<b>Работает без интернета.</b> Приложение сохранено на телефоне.' : '<b>Без интернета пока не готово.</b> Откройте приложение с иконки при включённом интернете и подождите несколько секунд.'}</div></div>`;
   if (Sync.on) body += `<div class="banner" style="margin-top:6px">${ic('check')}<div class="grow"><b>Синхронизация включена.</b> Ваши данные сохраняются в аккаунте Claude и одинаковы на всех устройствах, где вы открываете эту ссылку.</div></div>`;
   body += sec('Резервная копия', `<div class="group menu-list">
     <button class="row" data-act="export-json">${ic('download')}<span class="grow r-title">Сохранить копию (.json)</span></button>

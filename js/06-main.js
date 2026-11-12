@@ -406,6 +406,16 @@ document.addEventListener('touchend', (e) => {
   else { s.task.style.transform = ''; setTimeout(() => s.row.classList.remove('sr', 'sl'), 220); }
 });
 
+/* ---------- offline readiness (installed version) ---------- */
+const Offline = {
+  ready: null,
+  check(reg) {
+    const sw = (reg && reg.active) || (navigator.serviceWorker && navigator.serviceWorker.controller);
+    if (sw) sw.postMessage('offline-status');
+    setTimeout(() => { const a = navigator.serviceWorker && navigator.serviceWorker.controller; if (Offline.ready !== true && a) a.postMessage('offline-status'); }, 4000);
+  },
+};
+
 /* ---------- start-up ---------- */
 let lastDay = null;
 function init() {
@@ -426,6 +436,15 @@ function init() {
     const upd = () => { const kb = Math.max(0, window.innerHeight - visualViewport.height - visualViewport.offsetTop); document.documentElement.style.setProperty('--kb', (kb > 60 ? kb : 0) + 'px'); };
     visualViewport.addEventListener('resize', upd); visualViewport.addEventListener('scroll', upd);
   }
-  if (IS_PWA && 'serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (IS_PWA && 'serviceWorker' in navigator && /^https?:/.test(location.protocol)) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (!e.data || e.data.type !== 'offline-status') return;
+      const was = Offline.ready; Offline.ready = e.data.ready;
+      let told = false; try { told = localStorage.getItem('planirovk.offline') === '1'; } catch (er) { /* no storage */ }
+      if (Offline.ready && !told) { try { localStorage.setItem('planirovk.offline', '1'); } catch (er) { /* no storage */ } toast('Готово: приложение работает без интернета'); }
+      if (was !== Offline.ready && ['data', 'help'].includes(curView().v)) render();
+    });
+    navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then((reg) => Offline.check(reg)).catch(() => {});
+  }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
