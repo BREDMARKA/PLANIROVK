@@ -198,8 +198,10 @@ function remBlock(t) {
       <div class="rem-times"><span class="rem-day">${esc(dayLbl)}:</span>${stamps.map((x) => `<span class="chip ${x.at <= now ? 'past' : ''}">${ic('bell', 'xs')}${minToTime(x.m % 1440)}</span>`).join('')}</div>` : ''}
   </div>
   ${r ? `<p class="foot-note">Пока приложение открыто, напоминание придёт со звуком. Закрытое веб-приложение iPhone будить не разрешает — чтобы напоминания пришли в любом случае, добавьте их в Календарь: он напомнит даже без интернета.</p>
-    ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<button class="btn soft block" style="margin-top:10px" data-act="rem-cal" data-id="${t.id}">${ic('calplus', 'sm')}Добавить в Календарь iPhone</button>
-    <button class="btn ghost block sm" style="margin-top:8px" data-act="rem-cal-file" data-id="${t.id}">Не открылся Календарь? Сохранить файл</button>`}` : ''}
+    ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<a class="btn soft block" style="margin-top:10px" href="${calLink([t])}" target="_blank" rel="noopener">${ic('calplus', 'sm')}Добавить в Календарь iPhone</a>
+    <p class="foot-note">Откроется страница в Safari (нужен интернет) — там нажмите «Добавить в Календарь», затем «Добавить все».</p>
+    <button class="btn ghost block sm" style="margin-top:8px" data-act="rem-cal-file" data-id="${t.id}">Сохранить файл для Календаря</button>
+    <p class="foot-note">Запасной способ: выберите «Сохранить в Файлы», откройте файл в приложении «Файлы» и нажмите «Добавить все».</p>`}` : ''}
   </section>`;
 }
 

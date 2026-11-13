@@ -1,7 +1,7 @@
 /* Offline support: keep the app shell in a cache, serve it from there, refresh it in the background. */
-const CACHE = 'planirovk-v3';
+const CACHE = 'planirovk-v4';
 const ASSETS = [
-  './', './index.html', './app.css', './manifest.webmanifest',
+  './', './index.html', './cal.html', './app.css', './manifest.webmanifest',
   './js/01-core.js', './js/02-logic.js', './js/03-views.js', './js/04-views2.js', './js/05-sheets.js', './js/06-main.js',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
 ];

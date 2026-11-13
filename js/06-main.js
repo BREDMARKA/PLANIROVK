@@ -106,14 +106,18 @@ function showNextReminder() {
   if (q && taskById(q.id)) openSheet({ type: 'remind', id: q.id, info: q.info, onClose: showNextReminder });
 }
 
-/* Hand a calendar file to iPhone Calendar: Safari opens .ics files in its "Add to Calendar" screen. */
-const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-function addToCalendar(tasks, name) {
-  const withDate = tasks.filter((t) => t.date);
-  if (!withDate.length) { toast('Сначала укажите дату'); return; }
-  const ics = buildICS(withDate);
-  if (IS_IOS && !IN_CLAUDE) { window.location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics); return; }
-  saveFile((name || 'planirovk').slice(0, 40) + '.ics', ics, 'text/calendar');
+/* iPhone shows its "Add to Calendar" screen only from Safari, not from a home-screen app,
+   so the events travel in the link to cal.html, which opens in Safari and hands them over. */
+function calLink(tasks) {
+  const ics = buildICS(tasks.filter((t) => t.date));
+  const b64 = btoa(unescape(encodeURIComponent(ics))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return 'cal.html#' + b64;
+}
+function addToCalendar(tasks) {
+  if (!tasks.some((t) => t.date)) { toast('Сначала укажите дату'); return; }
+  const a = document.createElement('a');
+  a.href = calLink(tasks); a.target = '_blank'; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 
 /* ---------- actions ---------- */
@@ -314,7 +318,6 @@ const ACTS = {
     commit(); rerenderSheet();
   },
   'rem-count': (el) => { const t = taskById(ui.sheet.id); t.rem.count = clamp(t.rem.count + +ds(el).d, 2, 12); markPastNotified(t); commit(); rerenderSheet(); },
-  'rem-cal': (el) => { const t = taskById(ds(el).id); addToCalendar([t], t.title); },
   'rem-cal-file': (el) => { const t = taskById(ds(el).id); saveFile((t.title.slice(0, 40) || 'task') + '.ics', buildICS([t]), 'text/calendar'); },
   'rem-done': (el) => { const t = taskById(ds(el).id); if (!t) return; snap(); const r = toggleDone(t); closeSheet(); commit(); afterToggle(t, r); },
   'rem-snooze': (el) => {

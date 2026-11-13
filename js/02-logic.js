@@ -494,27 +494,30 @@ function buildICS(tasks) {
   const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Planirovk//RU', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
   tasks.filter((t) => t.date).forEach((t) => {
     const d = t.date.replace(/-/g, '');
-    L.push('BEGIN:VEVENT', `UID:${t.id}@planirovk`, `DTSTAMP:${stamp}`);
+    const main = [];
+    main.push('BEGIN:VEVENT', `UID:${t.id}@planirovk`, `DTSTAMP:${stamp}`);
     if (t.time) {
       const st = timeToMin(t.time), en = st + (t.dur || 30);
       const endKey = en >= 1440 ? addDays(t.date, 1).replace(/-/g, '') : d;
-      L.push(`DTSTART:${d}T${t.time.replace(':', '')}00`, `DTEND:${endKey}T${minToTime(en % 1440).replace(':', '')}00`);
+      main.push(`DTSTART:${d}T${t.time.replace(':', '')}00`, `DTEND:${endKey}T${minToTime(en % 1440).replace(':', '')}00`);
     } else {
-      L.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${addDays(t.date, 1).replace(/-/g, '')}`);
+      main.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${addDays(t.date, 1).replace(/-/g, '')}`);
     }
-    L.push(icsFold('SUMMARY:' + icsEsc(t.title)));
+    main.push(icsFold('SUMMARY:' + icsEsc(t.title)));
     const desc = [t.notes, ...t.subtasks.map((s) => (s.done ? '✓ ' : '☐ ') + s.title)].filter(Boolean).join('\n');
-    if (desc) L.push(icsFold('DESCRIPTION:' + icsEsc(desc)));
+    if (desc) main.push(icsFold('DESCRIPTION:' + icsEsc(desc)));
     const rr = icsRRule(t.repeat);
-    if (rr) L.push(rr);
-    const alarm = (trig) => L.push('BEGIN:VALARM', 'ACTION:DISPLAY', icsFold('DESCRIPTION:' + icsEsc(t.title)), `TRIGGER:${trig}`, 'END:VALARM');
+    if (rr) main.push(rr);
+    const alarm = (trig, to = main) => to.push('BEGIN:VALARM', 'ACTION:DISPLAY', icsFold('DESCRIPTION:' + icsEsc(t.title)), `TRIGGER:${trig}`, 'END:VALARM');
     const mins = t.rem ? remMinutes(t.rem) : [];
     if (mins.length === 1) {
       // one alert: relative to the event start, so it also works for repeating tasks
       const diff = mins[0] - (t.rem.off || 0) * 1440 - (t.time ? timeToMin(t.time) : 0);
       alarm(`${diff < 0 ? '-' : ''}PT${Math.abs(diff)}M`);
     }
-    L.push('END:VEVENT');
+    main.push('END:VEVENT');
+    // a task without a time but with several alerts needs only the alert events, not an extra all-day entry
+    if (!(mins.length > 1 && !t.time)) L.push(...main);
     if (mins.length > 1) {
       // iPhone Calendar keeps at most two alerts per event, so each alert becomes its own short event
       const base = addDays(t.date, -(t.rem.off || 0));
@@ -523,7 +526,7 @@ function buildICS(tasks) {
         L.push('BEGIN:VEVENT', `UID:${t.id}-r${i + 1}@planirovk`, `DTSTAMP:${stamp}`, `DTSTART:${k}T${hm}00`, 'DURATION:PT5M',
           icsFold('SUMMARY:' + icsEsc(`Напоминание ${i + 1}/${mins.length}: ${t.title}`)));
         if (rr) L.push(rr);
-        alarm('PT0M'); L.push('END:VEVENT');
+        alarm('PT0M', L); L.push('END:VEVENT');
       });
     }
   });
