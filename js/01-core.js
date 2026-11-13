@@ -162,7 +162,11 @@ function migrate(s) {
   if (!s.lists.find((l) => l.id === 'inbox')) s.lists.unshift(freshState().lists[0]);
   s.tasks.forEach((t) => {
     t.tags = t.tags || []; t.subtasks = t.subtasks || []; t.priority = t.priority || 0;
-    if (t.remind != null && !t.rem && typeof remFromOffset === 'function') t.rem = t.time ? remFromOffset(t.time, t.remind) : null;
+    if (t.remind != null && !t.rem && typeof remFromOffset === 'function') {
+      t.rem = t.time ? remFromOffset(t.time, t.remind) : null;
+      // converted reminders that are already over stay quiet
+      if (t.rem) remStamps(t).forEach((x) => { if (x.at <= Date.now()) s.meta.notified[t.id + '@' + x.at] = Date.now(); });
+    }
     delete t.remind;
     if (!t.listId || !s.lists.find((l) => l.id === t.listId)) t.listId = 'inbox';
   });

@@ -615,6 +615,7 @@ function seedExamples() {
   state.habits.push(water);
   state.habits.push(newHabit({ name: 'Читать 20 минут', color: '#8B4FD8', example: true, created: d(-21), log: hl(2, 6) }));
   state.habits.push(newHabit({ name: 'Спорт', color: '#E8890A', perWeek: 3, example: true, created: d(-21), log: hl(1, 2) }));
+  state.tasks.forEach((t) => { remStamps(t).forEach((x) => { if (x.at <= Date.now()) state.meta.notified[t.id + '@' + x.at] = Date.now(); }); });
   state.meta.seeded = true; state.meta.exampleLog = true;
 }
 function removeExamples() {
