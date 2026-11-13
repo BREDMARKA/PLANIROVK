@@ -136,8 +136,8 @@ SHEETS.task = (s) => {
       <div class="fld">${ic('timer')}<span class="lbl">Длительность</span><select data-tf="dur">${DUR_OPTS.map((m) => `<option value="${m}" ${m === (t.dur || 0) ? 'selected' : ''}>${m ? fmtDur(m) : 'Не указана'}</option>`).join('')}${!DUR_OPTS.includes(t.dur || 0) ? `<option value="${t.dur}" selected>${fmtDur(t.dur)}</option>` : ''}</select></div>
       <div class="fld">${ic('repeat')}<span class="lbl">Повтор</span><select data-tf="repeat">${REP_PRESETS.map(([k, n]) => `<option value="${k}" ${k === rk ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       ${t.repeat && t.repeat.freq === 'week' && rk !== 'weekend' ? `<div class="fld" style="flex-wrap:wrap"><span class="lbl" style="flex-basis:100%;font-size:14px;color:var(--ink-2)">По дням (если не выбрать — в тот же день недели)</span><div class="chips">${WD_ORDER.map((d) => `<button class="chip ${t.repeat.days && t.repeat.days.includes(d) ? 'on' : ''}" data-act="ed-repday" data-d="${d}">${WD_S[d]}</button>`).join('')}</div></div>` : ''}
-      <div class="fld">${ic('bell')}<span class="lbl">Напоминание</span>${t.time ? `<select data-tf="remind">${REMIND_OPTS.map(([v, n]) => `<option value="${v === null ? '' : v}" ${v === t.remind ? 'selected' : ''}>${n}</option>`).join('')}</select>` : '<span class="r-sub" style="color:var(--ink-3);font-size:14px">сначала укажите время</span>'}</div>
     </div></section>
+    ${remBlock(t)}
     <section class="sec" style="margin-top:14px"><div class="group">
       <div class="fld">${ic('flag')}<span class="lbl">Приоритет</span><div class="seg" style="width:190px">${PRIO.map((p) => `<button class="${t.priority === p.v ? 'on' : ''}" data-act="ed-prio" data-p="${p.v}" style="${p.v && t.priority === p.v ? `color:var(--p${p.v})` : ''}">${p.v ? p.short : 'Нет'}</button>`).join('')}</div></div>
       <div class="fld">${ic('folder')}<span class="lbl">Список</span><select data-tf="listId">${state.lists.filter((x) => !x.archived || x.id === t.listId).map((x) => `<option value="${x.id}" ${x.id === t.listId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
@@ -146,7 +146,6 @@ SHEETS.task = (s) => {
     </div></section>
     <section class="sec" style="margin-top:14px"><div class="group menu-list">
       ${!shop ? `<button class="row" data-act="task-focus" data-id="${t.id}">${ic('timer')}<span class="grow r-title">Фокус на задаче</span>${t.focusMin ? `<span class="r-end">${fmtDur(t.focusMin)}</span>` : ''}</button>` : ''}
-      ${!IN_CLAUDE && t.date ? `<button class="row" data-act="task-ics" data-id="${t.id}">${ic('calplus')}<span class="grow r-title">Добавить в Календарь iPhone</span></button>` : ''}
       <button class="row" data-act="task-share" data-id="${t.id}">${ic('share')}<span class="grow r-title">Поделиться</span></button>
       <button class="row" data-act="task-dup" data-id="${t.id}">${ic('copy')}<span class="grow r-title">Дублировать</span></button>
       <button class="row danger" data-act="task-del" data-id="${t.id}">${ic('trash')}<span class="grow r-title">Удалить</span></button></div></section>
@@ -165,13 +164,60 @@ function editTask(field, val) {
     t.repeat = p && p[2] ? clone(p[2]) : null;
     if (t.repeat && !t.date) t.date = firstDate(t.repeat, todayKey());
   } else if (field === 'dur') t.dur = +val || 0;
-  else if (field === 'remind') t.remind = val === '' ? null : +val;
-  else if (field === 'date') { t.date = val || null; if (!val) { t.time = null; } }
-  else if (field === 'time') { t.time = val || null; if (val && !t.date) t.date = todayKey(); if (val && t.remind == null) t.remind = 0; }
+  else if (field === 'date') { t.date = val || null; if (!val) { t.time = null; t.rem = null; } }
+  else if (field === 'time') {
+    const old = t.time; t.time = val || null;
+    if (val && !t.date) t.date = todayKey();
+    // a single reminder that followed the old start time moves with it; a new time gets one by default
+    if (val && (!t.rem || (t.rem.count === 1 && t.rem.from === old))) t.rem = { from: val, to: val, count: 1, off: t.rem ? t.rem.off || 0 : 0 };
+  }
   else if (field === 'listId') { t.listId = val; if (listById(val).type === 'shopping' && !t.cat) t.cat = categorize(t.title); }
   else t[field] = val;
-  delete state.meta.notified[t.id];
+  markPastNotified(t);
 }
+/* Alert times that are already over when a reminder is set should not fire right away. */
+function markPastNotified(t) {
+  const now = Date.now();
+  remStamps(t).forEach((x) => { if (x.at <= now) state.meta.notified[t.id + '@' + x.at] = now; });
+}
+
+/* ---------- Reminders block in the task editor ---------- */
+function remBlock(t) {
+  const r = t.rem, mode = !r ? 'none' : r.count > 1 ? 'many' : 'once', now = Date.now();
+  const stamps = remStamps(t);
+  const dayLbl = r && r.off ? fmtDay(addDays(t.date, -r.off)) : (t.date ? fmtDay(t.date) : '');
+  return `<section class="sec" style="margin-top:14px"><div class="sec-h"><span>Напоминания</span></div><div class="group">
+    <div class="fld">${ic('bell')}<div class="seg" style="flex:1">
+      <button class="${mode === 'none' ? 'on' : ''}" data-act="rem-mode" data-m="none">Нет</button>
+      <button class="${mode === 'once' ? 'on' : ''}" data-act="rem-mode" data-m="once">Один раз</button>
+      <button class="${mode === 'many' ? 'on' : ''}" data-act="rem-mode" data-m="many">Несколько</button></div></div>
+    ${mode === 'once' ? `<div class="fld"><span class="lbl">Во сколько</span><input type="time" data-rf="from" value="${r.from}"></div>` : ''}
+    ${mode === 'many' ? `<div class="fld"><span class="lbl">Период</span><span class="tpair"><input type="time" data-rf="from" value="${r.from}" aria-label="С"><span>–</span><input type="time" data-rf="to" value="${r.to}" aria-label="До"></span></div>
+      <div class="fld"><span class="lbl">Сколько раз</span><span class="tpair"><button class="round" style="width:34px;height:34px" data-act="rem-count" data-d="-1" aria-label="Меньше">${ic('minus', 'sm')}</button><b class="num" style="min-width:26px;text-align:center">${r.count}</b><button class="round" style="width:34px;height:34px" data-act="rem-count" data-d="1" aria-label="Больше">${ic('plus', 'sm')}</button></span></div>` : ''}
+    ${r ? `<div class="fld"><span class="lbl">День</span><select data-rf="off">${REM_OFF_OPTS.map(([v, n]) => `<option value="${v}" ${v === (r.off || 0) ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      <div class="rem-times"><span class="rem-day">${esc(dayLbl)}:</span>${stamps.map((x) => `<span class="chip ${x.at <= now ? 'past' : ''}">${ic('bell', 'xs')}${minToTime(x.m % 1440)}</span>`).join('')}</div>` : ''}
+  </div>
+  ${r ? `<p class="foot-note">Пока приложение открыто, напоминание придёт со звуком. Закрытое веб-приложение iPhone будить не разрешает — чтобы напоминания пришли в любом случае, добавьте их в Календарь: он напомнит даже без интернета.</p>
+    ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<button class="btn soft block" style="margin-top:10px" data-act="rem-cal" data-id="${t.id}">${ic('calplus', 'sm')}Добавить в Календарь iPhone</button>
+    <button class="btn ghost block sm" style="margin-top:8px" data-act="rem-cal-file" data-id="${t.id}">Не открылся Календарь? Сохранить файл</button>`}` : ''}
+  </section>`;
+}
+
+/* ---------- Reminder alert ---------- */
+SHEETS.remind = (s) => {
+  const t = taskById(s.id);
+  if (!t) return { title: 'Напоминание', body: '<div class="empty-inline">Задача удалена</div>' };
+  const i = s.info || {};
+  const when = i.snooze ? 'Отложенное напоминание' : `${i.n > 1 ? `Напоминание ${i.i} из ${i.n}` : 'Напоминание'}${i.m != null ? ' на ' + minToTime(i.m % 1440) : ''}${t.time ? ` · начало в ${t.time}` : ''}`;
+  return {
+    title: 'Напоминание',
+    body: `<div class="rem-alert"><div class="rem-bell">${ic('bell')}</div><div class="rem-title">${esc(t.title)}</div><div class="rem-sub">${esc(when)}</div>
+      ${t.notes ? `<div class="rem-sub">${esc(t.notes)}</div>` : ''}</div>
+      <button class="btn block" data-act="rem-done" data-id="${t.id}">${ic('check', 'sm')}Выполнено</button>
+      <div class="btn-row" style="margin-top:10px"><button class="btn ghost" data-act="rem-snooze" data-id="${t.id}" data-min="10">Через 10 мин</button><button class="btn ghost" data-act="rem-snooze" data-id="${t.id}" data-min="60">Через час</button></div>
+      <button class="btn ghost block" style="margin-top:10px" data-act="rem-open" data-id="${t.id}">Открыть задачу</button>`,
+  };
+};
 
 /* ---------- List editor & menu ---------- */
 SHEETS['list-edit'] = (s) => {

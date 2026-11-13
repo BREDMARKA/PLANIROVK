@@ -228,7 +228,7 @@ VIEWS.settings = () => {
     <div class="fld">${ic('play')}<span class="lbl">Автостарт следующего этапа</span>${swBtn(s.autoNext, 'set-toggle', 'data-k="autoNext"')}</div>
     <div class="fld">${ic('bell')}<span class="lbl">Звук по окончании</span>${swBtn(s.sound, 'set-toggle', 'data-k="sound"')}</div></div>`)}
   ${sec('Напоминания', `<div class="group"><div class="fld">${ic('bell')}<span class="lbl">Уведомления</span>${perm === 'granted' ? '<span class="r-end" style="color:var(--ok)">Включены</span>' : perm === 'unsupported' ? '<span class="r-end">Недоступны</span>' : `<button class="btn sm soft" data-act="notify-perm">${perm === 'denied' ? 'Запрещены' : 'Включить'}</button>`}</div></div>
-    <p class="foot-note">Пока приложение открыто, напоминания приходят сами. Чтобы iPhone напомнил, даже когда приложение закрыто, нажмите в задаче «Добавить в Календарь» — напоминание сработает из приложения «Календарь».</p>`)}`;
+    <p class="foot-note">Пока приложение открыто, напоминание приходит окном со звуком (если на iPhone не включён беззвучный режим). Закрытые веб-приложения iPhone будить не разрешает, поэтому для надёжных напоминаний откройте задачу → «Напоминания» → «Добавить в Календарь»: напомнит «Календарь», даже без интернета.</p>`)}`;
   return { title: 'Настройки', backLabel: 'Ещё', body, fab: false };
 };
 

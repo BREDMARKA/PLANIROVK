@@ -54,7 +54,7 @@ function taskRow(t, o = {}) {
   if (t.dur && !t.done) meta.push(`<span>${ic('timer', 'xs')}${fmtDur(t.dur)}</span>`);
   if (t.repeat) meta.push(`<span title="${esc(repeatLabel(t.repeat))}">${ic('repeat', 'xs')}</span>`);
   if (t.subtasks.length) meta.push(`<span>${ic('checks', 'xs')}${t.subtasks.filter((s) => s.done).length}/${t.subtasks.length}</span>`);
-  if (t.remind != null && t.time && !t.done) meta.push(`<span>${ic('bell', 'xs')}</span>`);
+  if (t.rem && !t.done) meta.push(`<span>${ic('bell', 'xs')}${t.rem.count > 1 ? t.rem.count + '×' : t.rem.from}</span>`);
   if (t.notes) meta.push(`<span>${ic('note', 'xs')}</span>`);
   t.tags.forEach((g) => meta.push(`<span class="tag">#${esc(g)}</span>`));
   if (o.showList && list.id !== 'inbox') meta.push(`<span><i class="dot" style="background:${list.color};width:8px;height:8px"></i>${esc(list.name)}</span>`);

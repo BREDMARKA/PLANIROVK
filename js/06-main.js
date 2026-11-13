@@ -55,13 +55,25 @@ const Focus = {
     if (r <= 0) this.finish(true);
   },
 };
-function beep() {
+/* iPhone only lets a page play sound after a tap, so the audio engine is unlocked on the first touch. */
+function unlockAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state !== 'running') {
+      audioCtx.resume();
+      const b = audioCtx.createBuffer(1, 1, 22050), src = audioCtx.createBufferSource();
+      src.buffer = b; src.connect(audioCtx.destination); src.start(0);
+    }
+  } catch (e) { audioCtx = null; }
+}
+function beep(loud) {
   if (!state.settings.sound || !audioCtx) return;
   try {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const t0 = audioCtx.currentTime;
-    [0, 0.25, 0.5].forEach((d, i) => {
+    (loud ? [0, 0.25, 0.5, 1.1, 1.35, 1.6] : [0, 0.25, 0.5]).forEach((d, i) => {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.frequency.value = i === 2 ? 1046 : 784; o.type = 'sine';
+      o.frequency.value = i % 3 === 2 ? 1046 : 784; o.type = 'sine';
       g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.25, t0 + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.22);
       o.connect(g).connect(audioCtx.destination); o.start(t0 + d); o.stop(t0 + d + 0.25);
     });
@@ -75,15 +87,33 @@ function notify(title, body) {
   } catch (e) { /* ignore */ }
 }
 function checkReminders() {
+  pruneNotified();
   const due = dueReminders();
   if (!due.length) return;
-  due.forEach(([t, key]) => {
-    state.meta.notified[key] = Date.now();
-    notify('Напоминание', `${t.title} — ${fmtDay(t.date)}, ${t.time}`);
+  due.forEach(({ t, info, keys }) => {
+    keys.forEach((k) => { state.meta.notified[k] = Date.now(); });
+    if (info.snooze) t.snoozeAt = null;
+    notify('Напоминание', t.title + (t.time ? ` — начало в ${t.time}` : ''));
   });
-  const t = due[0][0];
-  toast(`Напоминание: ${t.title}${t.time ? ' в ' + t.time : ''}`);
   persist();
+  beep(true);
+  ui.remQueue = (ui.remQueue || []).filter((q) => !due.some((d) => d.t.id === q.id)).concat(due.map((d) => ({ id: d.t.id, info: d.info })));
+  if (!ui.sheet) showNextReminder();
+  else if (ui.sheet.type !== 'remind') toast(`Напоминание: ${due[0].t.title}`);
+}
+function showNextReminder() {
+  const q = (ui.remQueue || []).shift();
+  if (q && taskById(q.id)) openSheet({ type: 'remind', id: q.id, info: q.info, onClose: showNextReminder });
+}
+
+/* Hand a calendar file to iPhone Calendar: Safari opens .ics files in its "Add to Calendar" screen. */
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function addToCalendar(tasks, name) {
+  const withDate = tasks.filter((t) => t.date);
+  if (!withDate.length) { toast('Сначала укажите дату'); return; }
+  const ics = buildICS(withDate);
+  if (IS_IOS && !IN_CLAUDE) { window.location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics); return; }
+  saveFile((name || 'planirovk').slice(0, 40) + '.ics', ics, 'text/calendar');
 }
 
 /* ---------- actions ---------- */
@@ -187,7 +217,7 @@ const ACTS = {
     state.templates.push({ id: uid(), name: l.name, emoji: l.emoji, color: l.color, type: l.type, items });
     closeSheet(); commit(); toast('Шаблон сохранён: «Ещё → Шаблоны»');
   },
-  'list-ics': (el) => { const l = listById(ds(el).id); const arr = state.tasks.filter((t) => t.listId === l.id && !t.done && t.date); if (!arr.length) { toast('В списке нет задач с датой'); return; } saveFile(l.name + '.ics', buildICS(arr), 'text/calendar'); },
+  'list-ics': (el) => { const l = listById(ds(el).id); const arr = state.tasks.filter((t) => t.listId === l.id && !t.done && t.date); if (!arr.length) { toast('В списке нет задач с датой'); return; } addToCalendar(arr, l.name); },
   'list-clear-done': (el) => { const id = ds(el).id; snap(); const n = state.tasks.filter((t) => t.listId === id && t.done).length; state.tasks = state.tasks.filter((t) => !(t.listId === id && t.done)); closeSheet(); commit(); toast(`Удалено выполненных: ${n}`, true); },
   'list-del': (el) => {
     const id = ds(el).id, l = listById(id), n = state.tasks.filter((t) => t.listId === id).length;
@@ -245,7 +275,7 @@ const ACTS = {
   'notify-perm': () => { try { Notification.requestPermission().then(() => render()); } catch (e) { toast('Уведомления недоступны'); } },
   'export-json': () => saveFile(`planirovk-${todayKey()}.json`, JSON.stringify(state, null, 1), 'application/json').then((ok) => { if (ok) toast('Копия сохранена'); }),
   'copy-all': () => copyText(state.lists.map(listAsText).join('\n\n')),
-  'export-ics': () => { const arr = active().filter((t) => t.date && listById(t.listId).type !== 'shopping'); if (!arr.length) { toast('Нет задач с датой'); return; } saveFile('planirovk.ics', buildICS(arr), 'text/calendar'); },
+  'export-ics': () => { const arr = active().filter((t) => t.date && listById(t.listId).type !== 'shopping'); if (!arr.length) { toast('Нет задач с датой'); return; } addToCalendar(arr, 'planirovk'); },
   'reset-all': () => confirmSheet('Удалить <b>все</b> задачи, списки, привычки и статистику? Это нельзя отменить — сначала сохраните копию.', 'Удалить всё', () => {
     const keep = state.settings; state = freshState(); state.settings = keep; state.meta.hideExampleBanner = true; ui.stack = { today: [], lists: [], cal: [], habits: [], more: [] }; commit(); toast('Все данные удалены');
   }),
@@ -269,14 +299,36 @@ const ACTS = {
     const made = addFromText(s.text.split('\n')[0], s.ctx); commit(); openTask(made[0].id);
   },
   'ed-date': (el) => { editTask('date', ds(el).k); commit(); rerenderSheet(); },
-  'ed-clear-time': () => { editTask('time', ''); const t = taskById(ui.sheet.id); t.remind = null; commit(); rerenderSheet(); },
+  'ed-clear-time': () => { editTask('time', ''); commit(); rerenderSheet(); },
+  'rem-mode': (el) => {
+    const t = taskById(ui.sheet.id), m = ds(el).m, r = t.rem;
+    if (m === 'none') { t.rem = null; t.snoozeAt = null; }
+    else {
+      if (!t.date) t.date = todayKey();
+      const nextHour = minToTime(Math.min(23 * 60, (Math.floor(nowMin() / 60) + 1) * 60));
+      const from = (r && r.from) || t.time || (m === 'many' ? '09:00' : nextHour);
+      t.rem = m === 'once' ? { from, to: from, count: 1, off: r ? r.off || 0 : 0 }
+        : { from, to: r && r.count > 1 ? r.to : minToTime(Math.min(timeToMin(from) + 360, 23 * 60 + 30)), count: r && r.count > 1 ? r.count : 3, off: r ? r.off || 0 : 0 };
+      markPastNotified(t);
+    }
+    commit(); rerenderSheet();
+  },
+  'rem-count': (el) => { const t = taskById(ui.sheet.id); t.rem.count = clamp(t.rem.count + +ds(el).d, 2, 12); markPastNotified(t); commit(); rerenderSheet(); },
+  'rem-cal': (el) => { const t = taskById(ds(el).id); addToCalendar([t], t.title); },
+  'rem-cal-file': (el) => { const t = taskById(ds(el).id); saveFile((t.title.slice(0, 40) || 'task') + '.ics', buildICS([t]), 'text/calendar'); },
+  'rem-done': (el) => { const t = taskById(ds(el).id); if (!t) return; snap(); const r = toggleDone(t); closeSheet(); commit(); afterToggle(t, r); },
+  'rem-snooze': (el) => {
+    const t = taskById(ds(el).id); if (!t) return;
+    t.snoozeAt = Date.now() + +ds(el).min * 60000; persist(); closeSheet();
+    const d = new Date(t.snoozeAt); toast(`Напомню в ${pad(d.getHours())}:${pad(d.getMinutes())}`);
+  },
+  'rem-open': (el) => { const id = ds(el).id; ui.sheet = null; openTask(id); },
   'ed-prio': (el) => { editTask('priority', +ds(el).p); commit(); rerenderSheet(); },
   'ed-repday': (el) => { const t = taskById(ui.sheet.id), d = +ds(el).d; const days = t.repeat.days || []; t.repeat.days = days.includes(d) ? days.filter((x) => x !== d) : days.concat(d); if (t.repeat.days.length && t.date && !t.repeat.days.includes(wdOf(t.date))) t.date = firstDate(t.repeat, todayKey()); commit(); rerenderSheet(); },
   'sub-toggle': (el) => { const t = taskById(ui.sheet.id), st = t.subtasks.find((x) => x.id === ds(el).sid); st.done = !st.done; commit(); rerenderSheet(); if (t.subtasks.every((x) => x.done) && !t.done) toast('Все шаги готовы — отметьте задачу'); },
   'sub-del': (el) => { const t = taskById(ui.sheet.id); t.subtasks = t.subtasks.filter((x) => x.id !== ds(el).sid); commit(); rerenderSheet(); },
   'tag-del': (el) => { const t = taskById(ui.sheet.id); t.tags = t.tags.filter((g) => g !== ds(el).tag); commit(); rerenderSheet(); },
   'tag-add': (el) => { const t = taskById(ui.sheet.id); if (!t.tags.includes(ds(el).tag)) t.tags.push(ds(el).tag); commit(); rerenderSheet(); },
-  'task-ics': (el) => { const t = taskById(ds(el).id); saveFile((t.title.slice(0, 40) || 'task') + '.ics', buildICS([t]), 'text/calendar'); },
   'task-share': (el) => { const t = taskById(ds(el).id); shareText(t.title, [t.title, t.date ? fmtDay(t.date) + (t.time ? ', ' + t.time : '') : '', t.notes, ...t.subtasks.map((s) => (s.done ? '✓ ' : '☐ ') + s.title)].filter(Boolean).join('\n')); },
   'task-dup': (el) => { const t = taskById(ds(el).id); const c = Object.assign(clone(t), { id: uid(), created: Date.now(), order: Date.now(), done: false, doneAt: null, doneDay: null, focusMin: 0, example: false }); c.subtasks.forEach((s) => { s.id = uid(); }); state.tasks.push(c); commit(); ui.sheet.id = c.id; rerenderSheet(); toast('Создана копия'); },
   'task-del': (el) => { snap(); const id = ds(el).id; state.tasks = state.tasks.filter((t) => t.id !== id); ui.sheet = null; renderSheet(); commit(); toast('Задача удалена', true); },
@@ -287,6 +339,7 @@ function refreshQaTools() { const box = $('#qa-tools'); if (box && ui.sheet) box
 let swipeBlockClick = false;
 document.addEventListener('click', (e) => {
   if (swipeBlockClick) { swipeBlockClick = false; e.preventDefault(); return; }
+  if (!audioCtx || audioCtx.state !== 'running') unlockAudio();
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled || !el.dataset.act) return;
   const fn = ACTS[el.dataset.act];
@@ -322,6 +375,13 @@ document.addEventListener('change', (e) => {
   }
   if (el.dataset.tf && ui.sheet && ui.sheet.type === 'task' && (el.tagName === 'SELECT' || el.type === 'date' || el.type === 'time')) {
     editTask(el.dataset.tf, el.value); commit(); rerenderSheet(); return;
+  }
+  if (el.dataset.rf && ui.sheet && ui.sheet.type === 'task') {
+    const t = taskById(ui.sheet.id); if (!t || !t.rem) return;
+    const f = el.dataset.rf;
+    if (f === 'off') t.rem.off = +el.value;
+    else if (el.value) { t.rem[f] = el.value; if (t.rem.count === 1) t.rem.to = t.rem.from; }
+    markPastNotified(t); commit(); rerenderSheet(); return;
   }
   if (el.dataset.set) { const k = el.dataset.set, v = el.value; state.settings[k] = /^\d+$/.test(v) ? +v : v; commit(); return; }
   if (el.id === 'import-file' && el.files && el.files[0]) {
@@ -428,7 +488,7 @@ function init() {
   render(true);
   Sync.init();
   setTimeout(checkReminders, 1500);
-  setInterval(checkReminders, 30000);
+  setInterval(checkReminders, 15000);
   setInterval(() => { if (todayKey() !== lastDay) { lastDay = todayKey(); ui.calSel = null; ui.calMonth = null; render(); } }, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { Focus.tick(); if (todayKey() !== lastDay) { lastDay = todayKey(); ui.calSel = null; ui.calMonth = null; } if (!ui.sheet) render(); checkReminders(); } else saveLocalNow(); });
   window.addEventListener('pagehide', saveLocalNow);

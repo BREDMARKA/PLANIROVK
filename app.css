@@ -574,6 +574,17 @@ textarea.inp { resize: none; min-height: 80px; line-height: 1.4; }
 .cat-h { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); padding: 10px 14px 4px; background: var(--surface); }
 .sugg { margin-top: 14px; }
 .hidden { display: none !important; }
+.tpair { display: flex; align-items: center; gap: 6px; }
+.fld .tpair input[type="time"] { max-width: none; width: 96px; text-align: center; }
+.rem-times { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 14px 12px; }
+.rem-times .rem-day { font-size: 13px; color: var(--ink-2); margin-right: 2px; }
+.rem-times .chip { height: 28px; font-size: 14px; background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums; }
+.rem-times .chip.past { background: var(--surface-2); color: var(--ink-3); text-decoration: line-through; }
+.rem-alert { text-align: center; padding: 6px 0 18px; }
+.rem-bell { width: 56px; height: 56px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin: 0 auto 12px; }
+.rem-bell svg.i { width: 28px; height: 28px; }
+.rem-title { font: 600 21px/1.3 var(--font-display); overflow-wrap: anywhere; }
+.rem-sub { color: var(--ink-2); font-size: 15px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .swipe .swipe-bg { display: none; }
 .swipe.sr .swipe-bg.right, .swipe.sl .swipe-bg.left { display: flex; }
 .swipe-bg svg.i { stroke: #fff; }

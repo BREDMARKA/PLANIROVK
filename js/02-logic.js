@@ -7,17 +7,42 @@ const PRIO = [
   { v: 2, name: 'Средний', short: '!!' },
   { v: 3, name: 'Высокий', short: '!!!' },
 ];
-const REMIND_OPTS = [
-  [null, 'Нет'], [0, 'В момент начала'], [5, 'За 5 минут'], [15, 'За 15 минут'], [30, 'За 30 минут'],
-  [60, 'За 1 час'], [120, 'За 2 часа'], [1440, 'За 1 день'],
-];
+/* Reminders: t.rem = { from: 'HH:MM', to: 'HH:MM', count, off } — `count` alerts spread evenly
+   from `from` to `to` (count 1 = one alert at `from`), `off` days before the task date. */
+const REM_OFF_OPTS = [[0, 'В день задачи'], [1, 'За 1 день'], [2, 'За 2 дня'], [3, 'За 3 дня'], [7, 'За неделю']];
+function remMinutes(rem) {
+  const n = clamp(rem.count || 1, 1, 12), a = timeToMin(rem.from);
+  if (n === 1) return [a];
+  let b = timeToMin(rem.to || rem.from); if (b <= a) b += 1440; // "с 22:00 до 01:00" runs past midnight
+  return Array.from({ length: n }, (_, i) => Math.round(a + ((b - a) * i) / (n - 1)));
+}
+function remStamps(t) {
+  if (!t.rem || !t.date) return [];
+  const d = dateOf(addDays(t.date, -(t.rem.off || 0)));
+  const mins = remMinutes(t.rem);
+  return mins.map((m, i) => ({ at: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, m).getTime(), i: i + 1, n: mins.length, m }));
+}
+const joinRu = (arr) => (arr.length < 2 ? arr.join('') : arr.slice(0, -1).join(', ') + ' и ' + arr[arr.length - 1]);
+function remSummary(t) {
+  if (!t.rem) return '';
+  const times = remMinutes(t.rem).map((m) => minToTime(m % 1440));
+  const off = t.rem.off ? REM_OFF_OPTS.find((o) => o[0] === t.rem.off)?.[1].toLowerCase() + ' ' : '';
+  return off + (times.length === 1 ? 'в ' + times[0] : joinRu(times));
+}
+function remFromOffset(time, offsetMin) {
+  // "напомни за 15 мин" / old offset-style reminders -> absolute time on the right day
+  let m = (time ? timeToMin(time) : 9 * 60) - (time ? offsetMin : 0), off = 0;
+  if (!time && offsetMin >= 1440) off = Math.round(offsetMin / 1440);
+  while (m < 0) { m += 1440; off++; }
+  return { from: minToTime(m), to: minToTime(m), count: 1, off };
+}
 const DUR_OPTS = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240];
 
 /* ---------- tasks ---------- */
 function newTask(f = {}) {
   return Object.assign({
     id: uid(), title: '', notes: '', listId: state.settings.defaultList || 'inbox', done: false, doneAt: null, doneDay: null,
-    created: Date.now(), date: null, time: null, dur: 0, priority: 0, tags: [], subtasks: [], repeat: null, remind: null,
+    created: Date.now(), date: null, time: null, dur: 0, priority: 0, tags: [], subtasks: [], repeat: null, rem: null, snoozeAt: null,
     qty: '', cat: '', focusMin: 0,
   }, f);
 }
@@ -156,6 +181,11 @@ function parseQuick(raw, opts = {}) {
     r.listId = l.id;
   });
   cut(/\s(!{1,3})(?=\s)/, (m, p) => { r.priority = p.length; });
+  // "напоминай с 12:40 до 19:30 3 раза"
+  cut(new RegExp('\\s(?:напоминай|напоминать|напомни|напомнить)\\s(?:с\\s)?(\\d{1,2})[:.](\\d{2})\\s(?:до|-|–)\\s?(\\d{1,2})[:.](\\d{2})(?:\\s(\\d{1,2})\\s?(?:раз|раза))?' + B, 'i'), (m, h1, m1, h2, m2, n) => {
+    if (+h1 > 23 || +h2 > 23 || +m1 > 59 || +m2 > 59) return false;
+    r.rem = { from: `${pad(+h1)}:${m1}`, to: `${pad(+h2)}:${m2}`, count: clamp(n ? +n : 3, 1, 12), off: 0 };
+  });
 
   // repeat
   const setRep = (rep) => { if (!r.repeat) r.repeat = rep; };
@@ -231,11 +261,6 @@ function parseQuick(raw, opts = {}) {
   cut(new RegExp('\\s(днём|днем)' + B, 'i'), () => { if (r.time !== undefined) return false; r.time = '13:00'; });
   cut(new RegExp('\\s(вечером)' + B, 'i'), () => { if (r.time !== undefined) return false; r.time = '19:00'; });
 
-  // duration
-  cut(new RegExp('\\s(?:на\\s)?(\\d+(?:[.,]\\d+)?)\\s?(ч|час|часа|часов)' + B, 'i'), (m, n) => { if (r.dur !== undefined) return false; r.dur = Math.round(parseFloat(n.replace(',', '.')) * 60); });
-  cut(new RegExp('\\s(?:на\\s)?(\\d+)\\s?(мин|минут|минуты|минуту)' + B, 'i'), (m, n) => { if (r.dur !== undefined) return false; r.dur = +n; });
-  cut(new RegExp('\\sна (полчаса|час)' + B, 'i'), (m, w) => { if (r.dur !== undefined) return false; r.dur = w.toLowerCase() === 'час' ? 60 : 30; });
-
   // reminder
   cut(new RegExp('\\s(?:напомни|напомнить)(?:\\sза\\s(\\d+)\\s?(мин|минут|минуты|ч|час|часа|часов|день|дня))?' + B, 'i'), (m, n, u) => {
     let v = 0;
@@ -243,9 +268,16 @@ function parseQuick(raw, opts = {}) {
     r.remind = v;
   });
 
+  // duration
+  cut(new RegExp('\\s(?:на\\s)?(\\d+(?:[.,]\\d+)?)\\s?(ч|час|часа|часов)' + B, 'i'), (m, n) => { if (r.dur !== undefined) return false; r.dur = Math.round(parseFloat(n.replace(',', '.')) * 60); });
+  cut(new RegExp('\\s(?:на\\s)?(\\d+)\\s?(мин|минут|минуты|минуту)' + B, 'i'), (m, n) => { if (r.dur !== undefined) return false; r.dur = +n; });
+  cut(new RegExp('\\sна (полчаса|час)' + B, 'i'), (m, w) => { if (r.dur !== undefined) return false; r.dur = w.toLowerCase() === 'час' ? 60 : 30; });
+
   if (r.repeat && r.date === undefined) r.date = firstDate(r.repeat, tk);
   if (r.time && r.date === undefined) r.date = timeToMin(r.time) > nowMin() ? tk : addDays(tk, 1);
-  if (r.time && r.remind === undefined) r.remind = 0;
+  if (!r.rem && r.remind !== undefined) r.rem = remFromOffset(r.time, r.remind);
+  else if (!r.rem && r.time) r.rem = { from: r.time, to: r.time, count: 1, off: 0 }; // timed tasks remind at their start
+  if (r.rem && r.date === undefined) r.date = tk;
   const title = s.replace(/\s+/g, ' ').replace(/^[\s,.;-]+|[\s,;-]+$/g, '').trim();
   r.title = title || raw.trim();
   return r;
@@ -259,7 +291,7 @@ function parsedChips(p) {
   if (p.priority) c.push([ 'flag', PRIO[p.priority].name ]);
   if (p.listId) c.push([ 'folder', listById(p.listId).name ]);
   p.tags.forEach((g) => c.push([ 'tag', g ]));
-  if (p.remind != null && p.time) c.push([ 'bell', p.remind ? REMIND_OPTS.find((o) => o[0] === p.remind)?.[1] || p.remind + ' мин' : 'Напомнить' ]);
+  if (p.rem) c.push([ 'bell', 'Напомнить ' + (p.rem.count > 1 ? `${p.rem.count} раза: ` : '') + remSummary({ rem: p.rem }) ]);
   return c;
 }
 
@@ -328,7 +360,7 @@ function addFromText(text, ctx = {}) {
       time: p.time !== undefined ? p.time : (ctx.time || null), dur: p.dur || ctx.dur || 0,
       priority: p.priority !== undefined ? p.priority : (ctx.priority || 0),
       tags: Array.from(new Set([...(ctx.tags || []), ...p.tags])), repeat: p.repeat || ctx.repeat || null,
-      remind: p.remind !== undefined ? p.remind : (ctx.remind !== undefined ? ctx.remind : null), order: ord + i,
+      rem: p.rem || null, order: ord + i,
     });
     if (list.type === 'shopping') {
       const q = splitQty(t.title); t.title = q.name.charAt(0).toUpperCase() + q.name.slice(1); t.qty = q.qty; t.cat = categorize(q.name);
@@ -447,6 +479,16 @@ function icsFold(line) {
   out.push(s); return out.join('\r\n');
 }
 const ICS_WD = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+function icsRRule(r) {
+  if (!r) return '';
+  const iv = r.every > 1 ? `;INTERVAL=${r.every}` : '';
+  if (r.freq === 'day') return `RRULE:FREQ=DAILY${iv}`;
+  if (r.freq === 'weekdays') return 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR';
+  if (r.freq === 'week') return `RRULE:FREQ=WEEKLY${iv}` + (r.days && r.days.length ? ';BYDAY=' + r.days.map((x) => ICS_WD[x]).join(',') : '');
+  if (r.freq === 'month') return `RRULE:FREQ=MONTHLY${iv}`;
+  if (r.freq === 'year') return 'RRULE:FREQ=YEARLY';
+  return '';
+}
 function buildICS(tasks) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Planirovk//RU', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
@@ -463,17 +505,27 @@ function buildICS(tasks) {
     L.push(icsFold('SUMMARY:' + icsEsc(t.title)));
     const desc = [t.notes, ...t.subtasks.map((s) => (s.done ? '✓ ' : '☐ ') + s.title)].filter(Boolean).join('\n');
     if (desc) L.push(icsFold('DESCRIPTION:' + icsEsc(desc)));
-    const r = t.repeat;
-    if (r) {
-      const iv = r.every > 1 ? `;INTERVAL=${r.every}` : '';
-      if (r.freq === 'day') L.push(`RRULE:FREQ=DAILY${iv}`);
-      else if (r.freq === 'weekdays') L.push('RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR');
-      else if (r.freq === 'week') L.push(`RRULE:FREQ=WEEKLY${iv}` + (r.days && r.days.length ? ';BYDAY=' + r.days.map((x) => ICS_WD[x]).join(',') : ''));
-      else if (r.freq === 'month') L.push(`RRULE:FREQ=MONTHLY${iv}`);
-      else if (r.freq === 'year') L.push('RRULE:FREQ=YEARLY');
+    const rr = icsRRule(t.repeat);
+    if (rr) L.push(rr);
+    const alarm = (trig) => L.push('BEGIN:VALARM', 'ACTION:DISPLAY', icsFold('DESCRIPTION:' + icsEsc(t.title)), `TRIGGER:${trig}`, 'END:VALARM');
+    const mins = t.rem ? remMinutes(t.rem) : [];
+    if (mins.length === 1) {
+      // one alert: relative to the event start, so it also works for repeating tasks
+      const diff = mins[0] - (t.rem.off || 0) * 1440 - (t.time ? timeToMin(t.time) : 0);
+      alarm(`${diff < 0 ? '-' : ''}PT${Math.abs(diff)}M`);
     }
-    const trig = t.time ? (t.remind != null ? `-PT${t.remind}M` : 'PT0M') : 'PT9H';
-    L.push('BEGIN:VALARM', 'ACTION:DISPLAY', icsFold('DESCRIPTION:' + icsEsc(t.title)), `TRIGGER:${trig}`, 'END:VALARM', 'END:VEVENT');
+    L.push('END:VEVENT');
+    if (mins.length > 1) {
+      // iPhone Calendar keeps at most two alerts per event, so each alert becomes its own short event
+      const base = addDays(t.date, -(t.rem.off || 0));
+      mins.forEach((m, i) => {
+        const k = addDays(base, Math.floor(m / 1440)).replace(/-/g, ''), hm = minToTime(m % 1440).replace(':', '');
+        L.push('BEGIN:VEVENT', `UID:${t.id}-r${i + 1}@planirovk`, `DTSTAMP:${stamp}`, `DTSTART:${k}T${hm}00`, 'DURATION:PT5M',
+          icsFold('SUMMARY:' + icsEsc(`Напоминание ${i + 1}/${mins.length}: ${t.title}`)));
+        if (rr) L.push(rr);
+        alarm('PT0M'); L.push('END:VEVENT');
+      });
+    }
   });
   L.push('END:VCALENDAR');
   return L.join('\r\n') + '\r\n';
@@ -503,17 +555,25 @@ function groupShop(items) {
 }
 
 /* ---------- in-app reminders ---------- */
+/* Returns one entry per task whose alert time has come (the latest one if several were missed). */
 function dueReminders() {
-  const now = Date.now(), out = [];
+  const now = Date.now(), out = [], seen = state.meta.notified;
   active().forEach((t) => {
-    if (!t.date || !t.time || t.remind == null) return;
-    const at = dateOf(t.date); const m = timeToMin(t.time);
-    at.setHours(Math.floor(m / 60), m % 60, 0, 0);
-    const fire = at.getTime() - t.remind * 60000;
-    const key = t.id + '@' + t.date + t.time;
-    if (now >= fire && now - fire < 12 * 3600e3 && !state.meta.notified[key]) out.push([t, key]);
+    const stamps = remStamps(t);
+    if (t.snoozeAt) stamps.push({ at: t.snoozeAt, snooze: true });
+    const due = stamps.filter((x) => now >= x.at && now - x.at < 12 * 3600e3 && !seen[t.id + '@' + x.at]);
+    if (due.length) out.push({ t, info: due[due.length - 1], keys: due.map((x) => t.id + '@' + x.at) });
   });
   return out;
+}
+function nextReminder(t) {
+  const now = Date.now();
+  const all = remStamps(t).map((x) => x.at).concat(t.snoozeAt ? [t.snoozeAt] : []).filter((a) => a > now).sort((a, b) => a - b);
+  return all[0] || null;
+}
+function pruneNotified() {
+  const old = Date.now() - 3 * 864e5;
+  Object.keys(state.meta.notified).forEach((k) => { const at = +k.split('@')[1]; if (!(at > old)) delete state.meta.notified[k]; });
 }
 
 /* ---------- examples for the first launch ---------- */
@@ -524,10 +584,10 @@ function seedExamples() {
   let o = Date.now();
   const T = (f) => { const t = newTask(Object.assign({ example: true, order: o++ }, f)); state.tasks.push(t); return t; };
   let sat = addDays(tk, 1); while (wdOf(sat) !== 6) sat = addDays(sat, 1);
-  T({ title: 'Созвон с командой', listId: work, date: tk, time: '10:00', dur: 30, priority: 2, tags: ['встречи'], remind: 15, repeat: { freq: 'weekdays', every: 1 } });
+  T({ title: 'Созвон с командой', listId: work, date: tk, time: '10:00', dur: 30, priority: 2, tags: ['встречи'], rem: { from: '09:45', to: '09:45', count: 1, off: 0 }, repeat: { freq: 'weekdays', every: 1 } });
   T({ title: 'Подготовить отчёт за месяц', listId: work, date: tk, time: '14:00', dur: 90, priority: 3, notes: 'Цифры за месяц, сравнение с прошлым, выводы', subtasks: [{ id: uid(), title: 'Собрать цифры', done: true }, { id: uid(), title: 'Построить графики', done: false }, { id: uid(), title: 'Отправить руководителю', done: false }] });
   T({ title: 'Оплатить интернет', listId: home, date: d(-1), priority: 2, repeat: { freq: 'month', every: 1 } });
-  T({ title: 'Позвонить маме', listId: home, date: d(1), time: '18:30', dur: 20, remind: 0 });
+  T({ title: 'Позвонить маме', listId: home, date: d(1), time: '18:30', dur: 20, rem: { from: '18:30', to: '18:30', count: 1, off: 0 } });
   T({ title: 'Конспект лекции по истории', listId: study, date: d(1), dur: 45 });
   T({ title: 'Решить 20 задач к экзамену', listId: study, date: d(3), priority: 3, tags: ['экзамен'], dur: 120, subtasks: [{ id: uid(), title: 'Задачи 1–10', done: false }, { id: uid(), title: 'Задачи 11–20', done: false }] });
   T({ title: 'Обновить презентацию для клиента', listId: work, date: d(2), time: '11:00', dur: 60, priority: 1 });
