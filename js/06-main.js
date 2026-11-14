@@ -106,18 +106,23 @@ function showNextReminder() {
   if (q && taskById(q.id)) openSheet({ type: 'remind', id: q.id, info: q.info, onClose: showNextReminder });
 }
 
-/* iPhone shows its "Add to Calendar" screen only from Safari, not from a home-screen app,
-   so the events travel in the link to cal.html, which opens in Safari and hands them over. */
-function calLink(tasks) {
-  const ics = buildICS(tasks.filter((t) => t.date));
-  const b64 = btoa(unescape(encodeURIComponent(ics))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return 'cal.html#' + b64;
+/* The iPhone "Add to Calendar" screen cannot be opened from a home-screen app, so the .ics file goes
+   through the system share sheet (Save to Files, then tap the file in Files). */
+function addToCalendar(tasks, name, back) {
+  const arr = tasks.filter((t) => t.date);
+  if (!arr.length) { toast('Сначала укажите дату'); return; }
+  openSheet({ type: 'cal-add', ids: arr.map((t) => t.id), name: name || arr[0].title, onClose: back });
 }
-function addToCalendar(tasks) {
-  if (!tasks.some((t) => t.date)) { toast('Сначала укажите дату'); return; }
-  const a = document.createElement('a');
-  a.href = calLink(tasks); a.target = '_blank'; a.rel = 'noopener';
-  document.body.appendChild(a); a.click(); a.remove();
+async function shareIcs(ics, name) {
+  const fname = (name || 'planirovk').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 40) + '.ics';
+  // Safari only shares a few file types, so a plain-text type with the .ics name is the fallback
+  for (const type of ['text/calendar', 'text/plain']) {
+    let file; try { file = new File([ics], fname, { type }); } catch (e) { return 'unsupported'; }
+    if (!(navigator.canShare && navigator.canShare({ files: [file] }))) continue;
+    try { await navigator.share({ files: [file], title: name }); return 'shared'; }
+    catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+  }
+  return 'unsupported';
 }
 
 /* ---------- actions ---------- */
@@ -318,7 +323,14 @@ const ACTS = {
     commit(); rerenderSheet();
   },
   'rem-count': (el) => { const t = taskById(ui.sheet.id); t.rem.count = clamp(t.rem.count + +ds(el).d, 2, 12); markPastNotified(t); commit(); rerenderSheet(); },
-  'rem-cal-file': (el) => { const t = taskById(ds(el).id); saveFile((t.title.slice(0, 40) || 'task') + '.ics', buildICS([t]), 'text/calendar'); },
+  'rem-cal': (el) => { const t = taskById(ds(el).id); addToCalendar([t], t.title, () => openTask(t.id)); },
+  'cal-send': async () => {
+    const sh = ui.sheet; if (!sh || sh.type !== 'cal-add') return;
+    const tasks = sh.ids.map(taskById).filter(Boolean), ics = buildICS(tasks);
+    const r = await shareIcs(ics, sh.name);
+    if (r === 'unsupported') { toast('Окно «Поделиться» недоступно — скачиваю файл'); saveFile((sh.name || 'planirovk').slice(0, 40) + '.ics', ics, 'text/calendar'); }
+  },
+  'cal-file': () => { const sh = ui.sheet; if (!sh) return; const tasks = sh.ids.map(taskById).filter(Boolean); saveFile((sh.name || 'planirovk').slice(0, 40) + '.ics', buildICS(tasks), 'text/calendar'); },
   'rem-done': (el) => { const t = taskById(ds(el).id); if (!t) return; snap(); const r = toggleDone(t); closeSheet(); commit(); afterToggle(t, r); },
   'rem-snooze': (el) => {
     const t = taskById(ds(el).id); if (!t) return;
@@ -507,7 +519,16 @@ function init() {
       if (Offline.ready && !told) { try { localStorage.setItem('planirovk.offline', '1'); } catch (er) { /* no storage */ } toast('Готово: приложение работает без интернета'); }
       if (was !== Offline.ready && ['data', 'help'].includes(curView().v)) render();
     });
-    navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then((reg) => Offline.check(reg)).catch(() => {});
+    // a new version of the app took over: reload into it (right away if nothing is being edited)
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      if (ui.sheet || typing) { ui.reloadWhenIdle = true; return; }
+      reloading = true; saveLocalNow(); location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then((reg) => { try { reg.update(); } catch (e) { /* offline */ } return navigator.serviceWorker.ready; }).then((reg) => Offline.check(reg)).catch(() => {});
   }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

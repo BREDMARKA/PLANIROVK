@@ -534,6 +534,18 @@ function buildICS(tasks) {
   return L.join('\r\n') + '\r\n';
 }
 
+/* Events found in an .ics text, for showing "what will be added" */
+function icsEvents(ics) {
+  const text = ics.replace(/\r\n[ \t]/g, ''), out = [];
+  text.split('BEGIN:VEVENT').slice(1).forEach((ev) => {
+    const sum = ((ev.match(/\nSUMMARY:(.*)/) || [])[1] || '').replace(/\\n/g, ' ').replace(/\\([,;\\])/g, '$1');
+    const st = ev.match(/\nDTSTART[^:]*:(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/);
+    const when = st ? fmtDay(`${st[1]}-${st[2]}-${st[3]}`) + (st[4] ? ', ' + st[4] + ':' + st[5] : '') : '';
+    out.push({ title: sum, when, repeat: /\nRRULE:/.test(ev), alarm: /BEGIN:VALARM/.test(ev) });
+  });
+  return out;
+}
+
 /* ---------- list as text (to share via messengers) ---------- */
 function listAsText(list) {
   const items = state.tasks.filter((t) => t.listId === list.id && !t.done);

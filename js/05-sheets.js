@@ -7,6 +7,7 @@ function closeSheet() {
   const s = ui.sheet; ui.sheet = null;
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   renderSheet(); render();
+  if (ui.reloadWhenIdle) { ui.reloadWhenIdle = false; saveLocalNow(); location.reload(); return; }
   if (s && s.onClose) s.onClose();
 }
 function renderSheet(first) {
@@ -198,12 +199,29 @@ function remBlock(t) {
       <div class="rem-times"><span class="rem-day">${esc(dayLbl)}:</span>${stamps.map((x) => `<span class="chip ${x.at <= now ? 'past' : ''}">${ic('bell', 'xs')}${minToTime(x.m % 1440)}</span>`).join('')}</div>` : ''}
   </div>
   ${r ? `<p class="foot-note">Пока приложение открыто, напоминание придёт со звуком. Закрытое веб-приложение iPhone будить не разрешает — чтобы напоминания пришли в любом случае, добавьте их в Календарь: он напомнит даже без интернета.</p>
-    ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<a class="btn soft block" style="margin-top:10px" href="${calLink([t])}" target="_blank" rel="noopener">${ic('calplus', 'sm')}Добавить в Календарь iPhone</a>
-    <p class="foot-note">Откроется страница в Safari (нужен интернет) — там нажмите «Добавить в Календарь», затем «Добавить все».</p>
-    <button class="btn ghost block sm" style="margin-top:8px" data-act="rem-cal-file" data-id="${t.id}">Сохранить файл для Календаря</button>
-    <p class="foot-note">Запасной способ: выберите «Сохранить в Файлы», откройте файл в приложении «Файлы» и нажмите «Добавить все».</p>`}` : ''}
+    ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<button class="btn soft block" style="margin-top:10px" data-act="rem-cal" data-id="${t.id}">${ic('calplus', 'sm')}Добавить в Календарь iPhone</button>`}` : ''}
   </section>`;
 }
+
+/* ---------- Add to Calendar ---------- */
+SHEETS['cal-add'] = (s) => {
+  const tasks = s.ids.map(taskById).filter(Boolean);
+  const evs = icsEvents(buildICS(tasks));
+  const shown = evs.slice(0, 12);
+  return {
+    title: 'В Календарь',
+    body: `<p class="help" style="margin:0 4px 10px">Календарь напомнит в нужное время, даже когда планировщик закрыт и нет интернета. Будет добавлено: <b>${pl(evs.length, ['событие', 'события', 'событий'])}</b>.</p>
+      <div class="group">${shown.map((e) => `<div class="row static"><span class="grow"><span class="r-title">${esc(e.title)}</span><br><span class="r-sub">${esc(e.when)}${e.repeat ? ' · повторяется' : ''}${e.alarm ? ' · с напоминанием' : ''}</span></span></div>`).join('')}${evs.length > shown.length ? `<div class="empty-inline">и ещё ${evs.length - shown.length}</div>` : ''}</div>
+      <button class="btn block" style="margin-top:14px" data-act="cal-send">${ic('share', 'sm')}Отправить в Календарь</button>
+      <div class="sec-h" style="margin-top:18px"><span>Что делать дальше</span></div>
+      <div class="group"><div class="row static help" style="display:block"><ol style="margin:0">
+        <li>В появившемся окне выберите <b>«Сохранить в Файлы»</b> и сохраните файл.</li>
+        <li>Откройте приложение <b>«Файлы»</b> и нажмите на сохранённый файл.</li>
+        <li>iPhone покажет события — нажмите <b>«Добавить все»</b>.</li></ol></div></div>
+      <p class="foot-note">Если в окне есть пункт «Календарь», выберите его — файл откроется сразу. Чтобы Календарь присылал уведомления, включите их: Настройки → Календарь → Уведомления.</p>
+      <button class="btn ghost block sm" style="margin-top:10px" data-act="cal-file">Скачать файл (.ics)</button>`,
+  };
+};
 
 /* ---------- Reminder alert ---------- */
 SHEETS.remind = (s) => {
