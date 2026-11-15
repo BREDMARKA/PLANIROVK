@@ -148,6 +148,7 @@ SHEETS.task = (s) => {
     <section class="sec" style="margin-top:14px"><div class="group menu-list">
       ${!shop ? `<button class="row" data-act="task-focus" data-id="${t.id}">${ic('timer')}<span class="grow r-title">Фокус на задаче</span>${t.focusMin ? `<span class="r-end">${fmtDur(t.focusMin)}</span>` : ''}</button>` : ''}
       <button class="row" data-act="task-share" data-id="${t.id}">${ic('share')}<span class="grow r-title">Поделиться</span></button>
+      <button class="row" data-act="task-tpl" data-id="${t.id}">${ic('layers')}<span class="grow r-title">Добавить в шаблон</span></button>
       <button class="row" data-act="task-dup" data-id="${t.id}">${ic('copy')}<span class="grow r-title">Дублировать</span></button>
       <button class="row danger" data-act="task-del" data-id="${t.id}">${ic('trash')}<span class="grow r-title">Удалить</span></button></div></section>
     <p class="meta-note">Создано ${fmtDay(keyOf(new Date(t.created)), { wd: true }).toLowerCase()}${t.done && t.doneDay ? ' · выполнено ' + fmtDay(t.doneDay).toLowerCase() : ''}${t.repeat ? ' · ' + repeatLabel(t.repeat).toLowerCase() : ''}</p>`;
@@ -202,6 +203,32 @@ function remBlock(t) {
     ${IN_CLAUDE ? '<p class="foot-note">Добавление в Календарь работает в версии, установленной на экран «Домой».</p>' : `<button class="btn soft block" style="margin-top:10px" data-act="rem-cal" data-id="${t.id}">${ic('calplus', 'sm')}Добавить в Календарь iPhone</button>`}` : ''}
   </section>`;
 }
+
+/* ---------- Templates: add tasks to one, apply one ---------- */
+SHEETS['tpl-pick'] = (s) => {
+  const tasks = s.ids.map(taskById).filter(Boolean);
+  const first = tasks[0], defName = first ? listById(first.listId).id === 'inbox' ? first.title.slice(0, 40) : listById(first.listId).name : 'Мой шаблон';
+  return {
+    title: 'В шаблон',
+    body: `<p class="help" style="margin:0 4px 10px">${tasks.length === 1 ? `Задача «${esc(first.title)}» сохранится в шаблоне вместе с подзадачами, заметкой, приоритетом и метками.` : `${pl(tasks.length, W_TASK)} сохранятся в шаблоне вместе с подзадачами, заметками, приоритетом и метками.`}</p>
+      ${state.templates.length ? `${sec('Добавить в шаблон', `<div class="group">${state.templates.map((t) => `<button class="row" data-act="tpl-add" data-id="${t.id}"><span class="ico-box" style="background:${t.color || 'var(--accent)'}">${esc(t.emoji || '📋')}</span><span class="grow"><span class="r-title">${esc(t.name)}</span><br><span class="r-sub">${pl(t.items.length, ['пункт', 'пункта', 'пунктов'])}</span></span>${ic('plus', 'sm')}</button>`).join('')}</div>`)}` : ''}
+      ${sec('Новый шаблон', `<input class="inp" id="tpl-new-name" value="${esc(s.newName != null ? s.newName : defName)}" placeholder="Название шаблона" maxlength="60">
+        <button class="btn block" style="margin-top:10px" data-act="tpl-new">${ic('plus', 'sm')}Создать шаблон</button>`)}`,
+  };
+};
+SHEETS['tpl-apply'] = (s) => {
+  const tpl = TEMPLATES.find((t) => t.id === s.id) || state.templates.find((t) => t.id === s.id);
+  if (!tpl) return { title: 'Шаблон', body: '<div class="empty-inline">Шаблон удалён</div>' };
+  const lists = state.lists.filter((l) => !l.archived);
+  const cur = s.listId || (lists.find((l) => l.type === (tpl.type || 'tasks')) || lists[0]).id;
+  return {
+    title: esc(tpl.name),
+    body: `<p class="help" style="margin:0 4px 6px">${pl(tpl.items.length, ['задача', 'задачи', 'задач'])}: ${esc(tpl.items.slice(0, 4).map(tplItemTitle).join(', '))}${tpl.items.length > 4 ? '…' : ''}</p>
+      <button class="btn block" style="margin-top:10px" data-act="tpl-apply-new">${ic('plus', 'sm')}Новым списком «${esc(tpl.name)}»</button>
+      ${sec('Или добавить в список', `<div class="group"><div class="fld">${ic('folder')}<span class="lbl">Список</span><select id="tpl-target">${lists.map((l) => `<option value="${l.id}" ${l.id === cur ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div></div>
+        <button class="btn soft block" style="margin-top:10px" data-act="tpl-apply-list">Добавить задачи в этот список</button>`)}`,
+  };
+};
 
 /* ---------- Add to Calendar ---------- */
 SHEETS['cal-add'] = (s) => {

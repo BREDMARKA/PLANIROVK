@@ -221,7 +221,7 @@ const ACTS = {
   'list-copy': (el) => copyText(listAsText(listById(ds(el).id))),
   'list-tpl': (el) => {
     const l = listById(ds(el).id);
-    const items = state.tasks.filter((t) => t.listId === l.id && !t.fromRepeat).sort((a, b) => (a.order || a.created) - (b.order || b.created)).map((t) => t.title + (t.qty ? ' ' + t.qty : ''));
+    const items = state.tasks.filter((t) => t.listId === l.id && !t.fromRepeat).sort((a, b) => (a.order || a.created) - (b.order || b.created)).map(tplItemFromTask);
     if (!items.length) { toast('В списке нет пунктов'); return; }
     state.templates.push({ id: uid(), name: l.name, emoji: l.emoji, color: l.color, type: l.type, items });
     closeSheet(); commit(); toast('Шаблон сохранён: «Ещё → Шаблоны»');
@@ -253,6 +253,7 @@ const ACTS = {
     else if (op === 'delete') { const ids = new Set(ui.sel); snap(); state.tasks = state.tasks.filter((t) => !ids.has(t.id)); ui.sel = null; commit(); toast(`Удалено: ${ids.size}`, true); }
     else if (op === 'move') openSheet({ type: 'pick-list' });
     else if (op === 'prio') openSheet({ type: 'pick-prio' });
+    else if (op === 'tpl') openSheet({ type: 'tpl-pick', ids: selIds() });
   },
   'pick-list': (el) => { const id = ds(el).id, l = listById(id); closeSheet(); applyToSel((t) => { t.listId = id; if (l.type === 'shopping' && !t.cat) t.cat = categorize(t.title); }, `В «${l.name}»`); },
   'pick-prio': (el) => { const p = +ds(el).p; closeSheet(); applyToSel((t) => { t.priority = p; }, `Приоритет «${PRIO[p].name}»`); },
@@ -292,13 +293,31 @@ const ACTS = {
   /* sheets */
   'sheet-close': () => closeSheet(),
   'confirm-ok': () => { const fn = ui.sheet.onOk; ui.sheet = null; renderSheet(); fn(); },
-  'tpl-use': (el) => {
-    const tpl = TEMPLATES.find((t) => t.id === ds(el).id) || state.templates.find((t) => t.id === ds(el).id);
-    if (!tpl) return;
-    confirmSheet(`Создать список «${esc(tpl.name)}» из ${pl(tpl.items.length, ['пункта', 'пунктов', 'пунктов'])}?`, 'Создать', () => {
-      const l = createFromTemplate(tpl); persist(); ui.tab = 'lists'; ui.stack.lists = [{ v: 'list', id: l.id }]; render(true); toast('Список создан');
-    }, false);
+  'tpl-use': (el) => openSheet({ type: 'tpl-apply', id: ds(el).id }),
+  'tpl-apply-new': () => applyTemplate(null),
+  'tpl-apply-list': () => { const sel = $('#tpl-target'); applyTemplate(sel ? sel.value : null); },
+  'task-tpl': (el) => openSheet({ type: 'tpl-pick', ids: [ds(el).id], onClose: (() => { const id = ds(el).id; return () => { if (taskById(id)) openTask(id); }; })() }),
+  'tpl-add': (el) => {
+    const tpl = state.templates.find((t) => t.id === ds(el).id), s = ui.sheet; if (!tpl || !s) return;
+    const n = addTasksToTemplate(tpl, s.ids.map(taskById).filter(Boolean));
+    if (ui.sel) ui.sel = null;
+    closeSheet(); commit();
+    toast(n ? `Добавлено в «${tpl.name}»: ${n}` : `Уже есть в «${tpl.name}»`);
   },
+  'tpl-new': () => {
+    const s = ui.sheet; if (!s) return;
+    const inp = $('#tpl-new-name'), name = (inp ? inp.value : '').trim();
+    if (!name) { toast('Напишите название шаблона'); if (inp) inp.focus(); return; }
+    const tasks = s.ids.map(taskById).filter(Boolean), l = tasks[0] ? listById(tasks[0].listId) : null;
+    const tpl = { id: uid(), name, emoji: l && l.id !== 'inbox' ? l.emoji : '📋', color: l && l.id !== 'inbox' ? l.color : LIST_COLORS[0], type: l ? l.type : 'tasks', items: [] };
+    addTasksToTemplate(tpl, tasks); state.templates.push(tpl);
+    if (ui.sel) ui.sel = null;
+    closeSheet(); commit(); toast(`Шаблон «${name}» создан: «Ещё → Шаблоны»`);
+  },
+  'tpl-item-del': (el) => { const tpl = state.templates.find((t) => t.id === ds(el).id); if (!tpl) return; snap(); const it = tpl.items.splice(+ds(el).i, 1)[0]; commit(); toast(`Убрано: ${tplItemTitle(it)}`, true); },
+  'tpl-del': (el) => { const id = ds(el).id, tpl = state.templates.find((t) => t.id === id); confirmSheet(`Удалить шаблон «${esc(tpl.name)}»? Задачи в списках останутся.`, 'Удалить', () => { snap(); state.templates = state.templates.filter((t) => t.id !== id); ui.stack[ui.tab] = ui.stack[ui.tab].filter((v) => !(v.v === 'tpl' && v.id === id)); commit(); toast('Шаблон удалён', true); }); },
+  'tpl-create': () => { const tpl = { id: uid(), name: 'Новый шаблон', emoji: '📋', color: LIST_COLORS[0], type: 'tasks', items: [] }; state.templates.push(tpl); persist(); go({ v: 'tpl', id: tpl.id }); },
+  'stat-period': (el) => { prefs.statPeriod = ds(el).p; savePrefs(); render(); },
   'qa-submit': () => qaSubmit(),
   'qa-date': (el) => { const c = ui.sheet.ctx; c.date = c.date === ds(el).k ? null : ds(el).k; refreshQaTools(); },
   'qa-prio': () => { const c = ui.sheet.ctx; c.priority = [3, 0, 1, 2][c.priority || 0]; refreshQaTools(); },
@@ -348,6 +367,15 @@ const ACTS = {
   'task-dup': (el) => { const t = taskById(ds(el).id); const c = Object.assign(clone(t), { id: uid(), created: Date.now(), order: Date.now(), done: false, doneAt: null, doneDay: null, focusMin: 0, example: false }); c.subtasks.forEach((s) => { s.id = uid(); }); state.tasks.push(c); commit(); ui.sheet.id = c.id; rerenderSheet(); toast('Создана копия'); },
   'task-del': (el) => { snap(); const id = ds(el).id; state.tasks = state.tasks.filter((t) => t.id !== id); ui.sheet = null; renderSheet(); commit(); toast('Задача удалена', true); },
 };
+function applyTemplate(targetId) {
+  const s = ui.sheet; if (!s) return;
+  const tpl = TEMPLATES.find((t) => t.id === s.id) || state.templates.find((t) => t.id === s.id); if (!tpl) return;
+  snap();
+  const l = createFromTemplate(tpl, targetId);
+  ui.sheet = null; renderSheet(); persist();
+  ui.tab = 'lists'; ui.stack.lists = [{ v: 'list', id: l.id }]; render(true);
+  toast(targetId ? `Добавлено в «${l.name}»: ${tpl.items.length}` : 'Список создан', true);
+}
 function refreshQaTools() { const box = $('#qa-tools'); if (box && ui.sheet) box.innerHTML = qaTools(ui.sheet); }
 
 /* ---------- event wiring ---------- */
@@ -370,6 +398,7 @@ document.addEventListener('touchend', (e) => {
 document.addEventListener('input', (e) => {
   const el = e.target;
   if (el.id === 'qa-text' && ui.sheet) { ui.sheet.text = el.value; autoGrow(el); qaPreview(); return; }
+  if (el.id === 'tpl-name') { const tpl = state.templates.find((t) => t.id === el.dataset.tpl); if (tpl && el.value.trim()) { tpl.name = el.value.trim(); persist(); } return; }
   if (el.id === 'q') { ui.q = el.value; const r = $('#results'); if (r) r.innerHTML = searchResults(ui.q); return; }
   if (el.dataset.tf && ui.sheet && ui.sheet.type === 'task' && (el.tagName === 'TEXTAREA' || el.type === 'text')) {
     const t = taskById(ui.sheet.id); if (!t) return;

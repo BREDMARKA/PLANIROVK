@@ -127,50 +127,144 @@ VIEWS.matrix = () => {
 };
 
 /* ---------- Stats ---------- */
-function barChart(id, days, values, unitF, tipF) {
-  const max = Math.max(1, ...values);
-  const step = max <= 4 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : max <= 60 ? 15 : max <= 120 ? 30 : 60;
+const STAT_PERIODS = [['week', 'Неделя', 7], ['month', 'Месяц', 30], ['year', 'Год', 365], ['all', 'Всё время', 0]];
+/* Bars on one scale; items: [{v, label, tip, hl}] */
+function bars(id, items, height = 120) {
+  const max = Math.max(1, ...items.map((x) => x.v));
+  const step = max <= 4 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : max <= 60 ? 15 : max <= 120 ? 30 : max <= 300 ? 60 : Math.ceil(max / 5 / 100) * 100;
   const top = Math.ceil(max / step) * step;
-  const tk = todayKey();
   const lines = [];
   for (let v = step; v <= top; v += step) lines.push(`<div class="gl" style="bottom:${(v / top) * 100}%"><span>${v}</span></div>`);
-  return `<div class="bars" id="${id}">${lines.join('')}${values.map((v, i) => `<button class="bar ${days[i] === tk ? 'today' : ''}" data-act="bar-tip" data-chart="${id}" data-tip="${esc(tipF(days[i], v))}" aria-label="${esc(tipF(days[i], v))}"><i style="height:${(v / top) * 100}%"></i></button>`).join('')}</div>
-    <div class="bar-x">${days.map((k, i) => `<span class="${k === tk ? 't' : ''}">${days.length > 7 ? (i % 2 === (days.length - 1) % 2 ? dateOf(k).getDate() : '') : WD_S[wdOf(k)]}</span>`).join('')}</div>`;
+  return `<div class="bars" id="${id}" style="height:${height}px">${lines.join('')}${items.map((x) => `<button class="bar ${x.hl ? 'today' : ''}" data-act="bar-tip" data-chart="${id}" data-tip="${esc(x.tip)}" aria-label="${esc(x.tip)}"><i style="height:${(x.v / top) * 100}%"></i></button>`).join('')}</div>
+    <div class="bar-x">${items.map((x) => `<span class="${x.hl ? 't' : ''}">${x.label}</span>`).join('')}</div>`;
+}
+function hbars(rows, unit = '') {
+  const mx = Math.max(1, ...rows.map((r) => r.v));
+  return rows.map((r) => `<div class="hbar"><span class="nm">${r.color ? `<i class="dot" style="background:${r.color}"></i>` : ''}${esc(r.name)}</span>
+    <span class="tr"><i style="width:${(r.v / mx) * 100}%;background:${r.color || 'var(--accent)'}"></i></span><span class="v">${r.text != null ? r.text : r.v + unit}</span></div>`).join('');
+}
+const tile = (v, k, sub) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+function dayStreaks() {
+  const keys = Object.keys(state.doneLog).filter((k) => state.doneLog[k] > 0).sort();
+  let best = 0, run = 0, prev = null;
+  keys.forEach((k) => { run = prev && diffDays(prev, k) === 1 ? run + 1 : 1; best = Math.max(best, run); prev = k; });
+  const tk = todayKey();
+  let cur = 0, k = (state.doneLog[tk] || 0) ? tk : addDays(tk, -1);
+  while ((state.doneLog[k] || 0) > 0 && cur < 3650) { cur++; k = addDays(k, -1); }
+  return { cur, best };
 }
 VIEWS.stats = () => {
-  const tk = todayKey();
-  const d14 = Array.from({ length: 14 }, (_, i) => addDays(tk, i - 13));
-  const done14 = d14.map((k) => state.doneLog[k] || 0);
-  const week = done14.slice(7).reduce((a, b) => a + b, 0), prevWeek = done14.slice(0, 7).reduce((a, b) => a + b, 0);
-  let streak = 0, k = (state.doneLog[tk] || 0) ? tk : addDays(tk, -1);
-  while ((state.doneLog[k] || 0) > 0 && streak < 3650) { streak++; k = addDays(k, -1); }
-  const d7 = d14.slice(7), f7 = d7.map((x) => state.focus.log[x] || 0), fSum = f7.reduce((a, b) => a + b, 0);
-  const avg = (Math.round((week / 7) * 10) / 10).toLocaleString('ru-RU');
-  let body = `<div class="stat-row" style="margin-top:6px">
-    <div class="stat"><div class="v">${state.doneLog[tk] || 0}</div><div class="k">Сделано сегодня</div></div>
-    <div class="stat"><div class="v">${week}</div><div class="k">За 7 дней${prevWeek ? ` (${week >= prevWeek ? '+' : ''}${week - prevWeek})` : ''}</div></div>
-    <div class="stat"><div class="v">${streak}</div><div class="k">${plural(streak, ['день', 'дня', 'дней'])} подряд</div></div></div>`;
-  body += `<section class="sec"><div class="chart"><div class="chart-h"><b>Выполнено задач</b><span>14 дней · в среднем ${avg} в день</span></div>
-    <div class="chart-tip" id="tip-c1">Нажмите на столбец, чтобы увидеть число</div>
-    ${barChart('c1', d14, done14, null, (day, v) => `${fmtDay(day, { wd: true })}: ${pl(v, W_TASK)}`)}</div></section>`;
-  body += `<section class="sec"><div class="chart"><div class="chart-h"><b>Время в фокусе, мин</b><span>за неделю ${fmtDur(fSum) || '0 мин'}</span></div>
-    <div class="chart-tip" id="tip-c2">${fSum ? 'Нажмите на столбец, чтобы увидеть время' : 'Запустите фокус-таймер — здесь появится ваше время'}</div>
-    ${barChart('c2', d7, f7, null, (day, v) => `${fmtDay(day, { wd: true })}: ${v ? fmtDur(v) : 'нет'}`)}</div></section>`;
-  const weekAgo = Date.now() - 7 * 864e5;
-  const rows = state.lists.map((l) => ({ l, done: state.tasks.filter((t) => t.listId === l.id && t.done && t.doneAt >= weekAgo).length, open: state.tasks.filter((t) => t.listId === l.id && !t.done).length }))
-    .filter((r) => r.done || r.open).sort((a, b) => b.done - a.done || b.open - a.open);
-  const mx = Math.max(1, ...rows.map((r) => r.done + r.open));
-  if (rows.length) body += sec('Списки за неделю', `<div class="chart">${rows.map((r) => `<div class="hbar"><span class="nm"><i class="dot" style="background:${r.l.color}"></i>${esc(r.l.name)}</span>
-      <span class="tr"><i style="width:${((r.done) / mx) * 100}%;background:${r.l.color}"></i></span><span class="v">${r.done} из ${r.done + r.open}</span></div>`).join('')}
-      <p class="foot-note" style="margin:6px 0 0">Сколько задач выполнено за 7 дней от общего числа в списке.</p></div>`);
+  const tk = todayKey(), period = prefs.statPeriod || 'week';
+  const P = STAT_PERIODS.find((x) => x[0] === period) || STAT_PERIODS[0];
+  // the "all time" range starts at the earliest thing the planner knows about
+  const firstKey = [...Object.keys(state.doneLog), ...state.tasks.map((t) => keyOf(new Date(t.created))), ...Object.keys(state.focus.log)].sort()[0] || tk;
+  const from = P[2] ? addDays(tk, -(P[2] - 1)) : (firstKey < tk ? firstKey : tk);
+  const span = diffDays(from, tk) + 1;
+  const inR = (k) => k && k >= from && k <= tk;
+  const sumLog = (log, a, b) => Object.keys(log).reduce((s, k) => (k >= a && k <= b ? s + (log[k] || 0) : s), 0);
+  const done = sumLog(state.doneLog, from, tk);
+  const prevDone = P[2] ? sumLog(state.doneLog, addDays(from, -P[2]), addDays(from, -1)) : null;
+  const doneTasks = state.tasks.filter((t) => t.done && inR(t.doneDay));
+  const created = state.tasks.filter((t) => !t.fromRepeat && inR(keyOf(new Date(t.created))));
+  const createdDone = created.filter((t) => t.done).length;
+  const withDate = doneTasks.filter((t) => t.date);
+  const late = withDate.filter((t) => t.doneDay > t.date);
+  const onTime = withDate.length - late.length;
+  const avgLate = late.length ? Math.round((late.reduce((s, t) => s + diffDays(t.date, t.doneDay), 0) / late.length) * 10) / 10 : 0;
+  let activeDays = 0, best = { v: 0, k: null };
+  for (let i = 0; i < span; i++) { const k = addDays(from, i), v = state.doneLog[k] || 0; if (v) activeDays++; if (v > best.v) best = { v, k }; }
+  const st = dayStreaks();
+  const fmtN = (n) => n.toLocaleString('ru-RU');
+  const delta = prevDone == null ? '' : (done - prevDone === 0 ? 'как в прошлый период' : `${done > prevDone ? '+' : ''}${done - prevDone} к прошлому периоду`);
+
+  let body = `<div class="seg" style="margin-top:6px">${STAT_PERIODS.map(([k, n]) => `<button class="${k === period ? 'on' : ''}" data-act="stat-period" data-p="${k}">${n}</button>`).join('')}</div>
+    <p class="foot-note" style="margin:8px 4px 0">${period === 'all' ? `С ${fmtDay(from, { noRel: true })} — ${pl(span, W_DAY)}` : `${fmtDay(from, { noRel: true })} — сегодня`}</p>`;
+
+  body += `<div class="stat-row" style="margin-top:10px">${tile(fmtN(done), 'Выполнено задач', delta)}${tile(fmtN(created.length), 'Создано задач', created.length ? `из них сделано ${pct(createdDone, created.length)}%` : '')}${tile(withDate.length ? pct(onTime, withDate.length) + '%' : '—', 'Сделано в срок', withDate.length ? `${onTime} из ${withDate.length} со сроком` : 'нет задач со сроком')}</div>
+    <div class="stat-row" style="margin-top:10px">${tile(`${activeDays}<small>/${span}</small>`, 'Дней с делами', `${pct(activeDays, span)}% дней`)}${tile((Math.round((done / span) * 10) / 10).toLocaleString('ru-RU'), 'В среднем в день', activeDays ? `${(Math.round((done / activeDays) * 10) / 10).toLocaleString('ru-RU')} в рабочий день` : '')}${tile(best.v, 'Рекорд за день', best.k ? fmtDay(best.k, { noRel: true }) : '')}</div>`;
+
+  // completed over time: days for week/month, months for year/all time
+  let items = [];
+  if (span <= 31) {
+    items = Array.from({ length: span }, (_, i) => { const k = addDays(from, i), v = state.doneLog[k] || 0; return { v, hl: k === tk, label: span <= 7 ? WD_S[wdOf(k)] : (i % 5 === (span - 1) % 5 ? dateOf(k).getDate() : ''), tip: `${fmtDay(k, { wd: true })}: ${pl(v, W_TASK)}` }; });
+  } else {
+    const months = []; let m = from.slice(0, 7);
+    while (m <= tk.slice(0, 7)) { months.push(m); m = addMonths(m + '-01', 1).slice(0, 7); }
+    const shown = months.slice(-24);
+    items = shown.map((mk, i) => { const [y, mo] = mk.split('-').map(Number); const v = sumLog(state.doneLog, mk + '-01', mk + '-31'); return { v, hl: mk === tk.slice(0, 7), label: shown.length <= 12 || i % 2 === (shown.length - 1) % 2 ? MONTHS_S[mo - 1] : '', tip: `${MONTHS[mo - 1]} ${y}: ${pl(v, W_TASK)}` }; });
+  }
+  body += `<section class="sec"><div class="chart"><div class="chart-h"><b>Выполнено ${span <= 31 ? 'по дням' : 'по месяцам'}</b><span>всего ${fmtN(done)}</span></div>
+    <div class="chart-tip" id="tip-c1">Нажмите на столбец, чтобы увидеть число</div>${bars('c1', items)}</div></section>`;
+
+  // weekdays: which days of the week get things done
+  const wd = [0, 0, 0, 0, 0, 0, 0];
+  Object.keys(state.doneLog).forEach((k) => { if (inR(k)) wd[wdOf(k)] += state.doneLog[k]; });
+  const order = [0, 1, 2, 3, 4, 5, 6].map((i) => (i + state.settings.weekStart) % 7);
+  const wmax = Math.max(...wd);
+  body += `<section class="sec"><div class="chart"><div class="chart-h"><b>По дням недели</b><span>${wmax ? 'больше всего — ' + WD_L[wd.indexOf(wmax)] : 'пока нет данных'}</span></div>
+    <div class="chart-tip" id="tip-c3">Нажмите на столбец, чтобы увидеть число</div>
+    ${bars('c3', order.map((d) => ({ v: wd[d], label: WD_S[d], hl: wd[d] === wmax && wmax > 0, tip: `${WD_L[d][0].toUpperCase() + WD_L[d].slice(1)}: ${pl(wd[d], W_TASK)}` })), 90)}</div></section>`;
+
+  // time of day by the moment tasks were checked off
+  const parts = [['Утро', 5, 12], ['День', 12, 17], ['Вечер', 17, 23], ['Ночь', 23, 29]];
+  const byPart = parts.map(([n, a, b]) => ({ name: `${n} (${pad(a % 24)}–${pad(b % 24)})`, v: doneTasks.filter((t) => { if (!t.doneAt) return false; let h = new Date(t.doneAt).getHours(); if (h < 5) h += 24; return h >= a && h < b; }).length }));
+  if (doneTasks.length) body += sec('Когда вы делаете дела', `<div class="chart">${hbars(byPart)}</div>`);
+
+  // priorities
+  const pr = [3, 2, 1, 0].map((p) => ({ name: p ? PRIO[p].name : 'Обычные', v: doneTasks.filter((t) => t.priority === p).length, color: p ? `var(--p${p})` : 'var(--ink-3)' }));
+  if (doneTasks.length) body += sec('Выполнено по важности', `<div class="chart">${hbars(pr)}</div>`);
+
+  // deadlines
+  const lateNow = overdueTasks().length;
+  body += sec('Сроки', `<div class="group">
+    ${[['Сделано в срок', onTime], ['Сделано с опозданием', late.length], ['Среднее опоздание', late.length ? `${avgLate.toLocaleString('ru-RU')} ${plural(Math.ceil(avgLate), ['день', 'дня', 'дней'])}` : '—'], ['Просрочено сейчас', lateNow]]
+      .map(([k, v]) => `<div class="row static"><span class="grow">${k}</span><span class="r-end">${v}</span></div>`).join('')}</div>`);
+
+  // lists and tags
+  const lrows = state.lists.map((l) => ({ name: l.name, color: l.color, v: doneTasks.filter((t) => t.listId === l.id).length, open: state.tasks.filter((t) => t.listId === l.id && !t.done).length }))
+    .filter((r) => r.v || r.open).sort((a, b) => b.v - a.v || b.open - a.open).map((r) => Object.assign(r, { text: `${r.v} · осталось ${r.open}` }));
+  if (lrows.length) body += sec('По спискам', `<div class="chart">${hbars(lrows)}</div>`);
+  const tagCount = {};
+  doneTasks.forEach((t) => t.tags.forEach((g) => { tagCount[g] = (tagCount[g] || 0) + 1; }));
+  const trows = Object.entries(tagCount).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g, v]) => ({ name: '#' + g, v }));
+  if (trows.length) body += sec('Самые частые метки', `<div class="chart">${hbars(trows)}</div>`);
+
+  // focus
+  const fMin = sumLog(state.focus.log, from, tk), fCnt = sumLog(state.focus.count, from, tk);
+  const fDays = span <= 31 ? Array.from({ length: Math.min(span, 14) }, (_, i) => addDays(tk, -Math.min(span, 14) + 1 + i)) : [];
+  const topF = state.tasks.filter((t) => t.focusMin).sort((a, b) => b.focusMin - a.focusMin).slice(0, 3);
+  body += sec('Фокус', `<div class="stat-row">${tile(fmtDur(fMin) || '0 мин', 'В фокусе')}${tile(fCnt, 'Подходов')}${tile(fCnt ? Math.round(fMin / fCnt) + ' мин' : '—', 'Средний подход')}</div>
+    ${fDays.length && fMin ? `<div class="chart" style="margin-top:10px"><div class="chart-tip" id="tip-c2">Минуты в фокусе — нажмите на столбец</div>${bars('c2', fDays.map((k) => ({ v: state.focus.log[k] || 0, hl: k === tk, label: fDays.length <= 7 ? WD_S[wdOf(k)] : (dateOf(k).getDate() % 2 ? '' : dateOf(k).getDate()), tip: `${fmtDay(k, { wd: true })}: ${state.focus.log[k] ? fmtDur(state.focus.log[k]) : 'нет'}` })), 90)}</div>` : ''}
+    ${topF.length ? `<div class="group" style="margin-top:10px">${topF.map((t) => `<button class="row" data-act="open" data-id="${t.id}"><span class="grow r-title">${esc(t.title)}</span><span class="r-end">${fmtDur(t.focusMin)}</span></button>`).join('')}</div>` : ''}`);
+
+  // habits
   const hs = state.habits.filter((h) => !h.archived);
-  if (hs.length) body += sec('Привычки за 30 дней', `<div class="chart">${hs.map((h) => { const r = hRate(h); return `<div class="hbar"><span class="nm"><i class="dot" style="background:${h.color}"></i>${esc(h.name)}</span><span class="tr"><i style="width:${r}%;background:${h.color}"></i></span><span class="v">${r}%</span></div>`; }).join('')}</div>`);
-  const lateN = overdueTasks().length;
-  body += sec('Советы', `<div class="group">${[
-    lateN ? `Просрочено ${pl(lateN, W_TASK)}. Перенесите их на реальные даты или удалите неактуальные.` : 'Просроченных задач нет — так держать.',
-    week < prevWeek ? 'На этой неделе выполнено меньше, чем на прошлой. Попробуйте планировать меньше задач, но доводить их до конца.' : 'Выполнено не меньше, чем неделей раньше. Хороший темп.',
-    fSum < 60 ? 'Попробуйте 2–3 подхода фокус-таймера в день для самых важных задач.' : `Вы провели в фокусе ${fmtDur(fSum)} за неделю.`,
-  ].map((x) => `<div class="row static"><span class="grow r-sub" style="font-size:14px;color:var(--ink)">${x}</span></div>`).join('')}</div>`);
+  if (hs.length) {
+    const days = Math.min(span, 365);
+    body += sec(`Привычки за ${pl(days, W_DAY)}`, `<div class="chart">${hbars(hs.map((h) => { const r = hRate(h, days), s = hStreak(h); return { name: h.name, color: h.color, v: r, text: `${r}% · серия ${s.n}` }; }))}</div>`);
+  }
+
+  // all-time totals
+  const allDone = Object.values(state.doneLog).reduce((a, b) => a + b, 0);
+  const subDone = state.tasks.reduce((a, t) => a + t.subtasks.filter((x) => x.done).length, 0);
+  const focusAll = Object.values(state.focus.log).reduce((a, b) => a + b, 0);
+  const habitMarks = state.habits.reduce((a, h) => a + Object.keys(h.log).filter((k) => hDone(h, k)).length, 0);
+  body += sec('За всё время', `<div class="group">${[
+    ['Выполнено задач', fmtN(allDone)], ['Выполнено подзадач', fmtN(subDone)], ['Сейчас в работе', fmtN(active().length)],
+    ['Серия дней с делами', `${st.cur} (лучшая ${st.best})`], ['Время в фокусе', fmtDur(focusAll) || '0 мин'], ['Отметок привычек', fmtN(habitMarks)],
+    ['Списков', userLists().length], ['Своих шаблонов', state.templates.length],
+  ].map(([k, v]) => `<div class="row static"><span class="grow">${k}</span><span class="r-end">${v}</span></div>`).join('')}</div>
+  <p class="foot-note">Подробности по спискам, важности и срокам считаются по задачам, которые не удалены.</p>`);
+
+  const tips = [
+    lateNow ? `Просрочено ${pl(lateNow, W_TASK)}. Перенесите их на реальные даты или удалите неактуальные.` : 'Просроченных задач нет — так держать.',
+    withDate.length >= 3 && pct(onTime, withDate.length) < 70 ? 'Меньше трети задач сделано вовремя? Ставьте сроки с запасом в 1–2 дня.' : '',
+    prevDone != null && done < prevDone ? 'В этот период сделано меньше, чем в прошлый. Планируйте меньше задач, но доводите их до конца.' : '',
+    wmax && span >= 14 ? `Самый продуктивный день — ${WD_L[wd.indexOf(wmax)]}. Ставьте на него самые важные дела.` : '',
+    fMin < 60 ? 'Попробуйте 2–3 подхода фокус-таймера в день для самых важных задач.' : '',
+  ].filter(Boolean);
+  body += sec('Советы', `<div class="group">${tips.map((x) => `<div class="row static"><span class="grow" style="font-size:14px">${x}</span></div>`).join('')}</div>`);
   return { title: 'Статистика', backLabel: 'Ещё', body, fab: false };
 };
 
@@ -197,11 +291,28 @@ VIEWS.search = () => ({
 
 /* ---------- Templates ---------- */
 VIEWS.templates = () => {
-  const card = (t, own) => `<button data-act="tpl-use" data-id="${t.id}"><span class="e">${esc(t.emoji || '📋')}</span><b>${esc(t.name)}</b><span>${own ? 'Ваш шаблон · ' : ''}${pl(t.items.length, ['пункт', 'пункта', 'пунктов'])}${t.desc ? ' · ' + esc(t.desc) : ''}</span></button>`;
-  let body = `<p class="help" style="margin:4px 4px 0">Готовые списки дел. Выберите шаблон — появится новый список, который можно менять как угодно.</p>`;
+  const card = (t, own) => `<button data-act="${own ? 'go' : 'tpl-use'}" data-v="tpl" data-id="${t.id}"><span class="e">${esc(t.emoji || '📋')}</span><b>${esc(t.name)}</b><span>${pl(t.items.length, ['пункт', 'пункта', 'пунктов'])}${t.desc ? ' · ' + esc(t.desc) : ''}</span></button>`;
+  let body = `<p class="help" style="margin:4px 4px 0">Шаблон — готовый набор задач. Примените его, и задачи появятся в новом или уже существующем списке.</p>`;
+  body += sec('Мои шаблоны', state.templates.length ? `<div class="tpl">${state.templates.map((t) => card(t, true)).join('')}</div>`
+    : `<div class="group"><div class="row static help" style="display:block">Чтобы сделать свой шаблон: откройте задачу → <b>«Добавить в шаблон»</b>. Или выберите несколько задач в списке кнопкой ${ic('select', 'xs')} → <b>«В шаблон»</b>. Весь список целиком: «⋯» → «Сохранить как шаблон».</div></div>`,
+    `<button class="link" data-act="tpl-create">Новый</button>`);
   body += sec('Готовые', `<div class="tpl">${TEMPLATES.map((t) => card(t)).join('')}</div>`);
-  body += sec('Мои шаблоны', state.templates.length ? `<div class="tpl">${state.templates.map((t) => card(t, true)).join('')}</div>` : '<div class="group"><div class="empty-inline">Откройте любой список → «⋯» → «Сохранить как шаблон»</div></div>');
   return { title: 'Шаблоны', backLabel: 'Назад', body, fab: false };
+};
+VIEWS.tpl = (v) => {
+  const t = state.templates.find((x) => x.id === v.id);
+  if (!t) { ui.stack[ui.tab].pop(); return VIEWS[curView().v](curView()); }
+  const rows = t.items.map((it, i) => {
+    const meta = tplItemMeta(it);
+    return `<div class="row static"><span class="grow"><span class="r-title">${esc(tplItemTitle(it))}</span>${meta ? `<br><span class="r-sub">${esc(meta)}</span>` : ''}${typeof it !== 'string' && it.notes ? `<br><span class="r-sub">${esc(it.notes)}</span>` : ''}</span>
+      <button class="icon-btn" style="color:var(--ink-3)" data-act="tpl-item-del" data-id="${t.id}" data-i="${i}" aria-label="Убрать из шаблона">${ic('x', 'sm')}</button></div>`;
+  }).join('');
+  const body = `<input class="inp" id="tpl-name" data-tpl="${t.id}" value="${esc(t.name)}" aria-label="Название шаблона" maxlength="60" style="margin-top:4px">
+    <button class="btn block" style="margin-top:12px" data-act="tpl-use" data-id="${t.id}" ${t.items.length ? '' : 'disabled'}>${ic('layers', 'sm')}Применить шаблон</button>
+    ${sec(`Задачи · ${t.items.length}`, t.items.length ? `<div class="group">${rows}</div>` : emptyBox('Шаблон пуст', 'Откройте любую задачу и нажмите «Добавить в шаблон».'))}
+    <p class="foot-note">Даты в шаблоне не хранятся: задачи появятся без срока, а повторяющиеся — с ближайшей подходящей даты. Подзадачи, заметки, приоритет, метки и длительность сохраняются.</p>
+    <button class="btn danger block" style="margin-top:14px" data-act="tpl-del" data-id="${t.id}">${ic('trash', 'sm')}Удалить шаблон</button>`;
+  return { title: `${esc(t.emoji || '📋')} ${esc(t.name)}`, sub: t.type === 'shopping' ? 'Шаблон покупок' : '', backLabel: 'Шаблоны', body, fab: false };
 };
 
 /* ---------- Settings ---------- */

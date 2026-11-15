@@ -319,6 +319,7 @@ function selBar() {
     <button data-act="sel-do" data-op="tomorrow" ${dis}>${ic('sunrise')}Завтра</button>
     <button data-act="sel-do" data-op="move" ${dis}>${ic('folder')}Список</button>
     <button data-act="sel-do" data-op="prio" ${dis}>${ic('flag')}Важность</button>
+    <button data-act="sel-do" data-op="tpl" ${dis}>${ic('layers')}В шаблон</button>
     <button data-act="sel-do" data-op="done" ${dis}>${ic('check')}Готово</button>
     <button class="danger" data-act="sel-do" data-op="delete" ${dis}>${ic('trash')}Удалить</button></div>`;
 }

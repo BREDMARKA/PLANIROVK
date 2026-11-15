@@ -384,14 +384,62 @@ const TEMPLATES = [
   { id: 'tpl-weekend', name: 'Планы на выходные', emoji: '🎉', color: '#D6409F', type: 'tasks', desc: 'Отдых, дела, близкие', items: ['Выспаться без будильника', 'Прогулка или поездка за город', 'Встреча с друзьями', 'Фильм или книга', 'Продукты на неделю', 'Подготовить одежду на неделю', 'Спланировать следующую неделю'] },
   { id: 'tpl-move', name: 'Переезд', emoji: '📦', color: '#8A6A44', type: 'tasks', desc: 'Сборы, транспорт, документы', items: ['Коробки, скотч, маркер', 'Заказать грузчиков и машину !!', 'Упаковать вещи по комнатам', 'Подписать коробки', 'Перенести интернет', 'Сменить адрес доставки и в документах', 'Передать ключи'] },
 ];
-function createFromTemplate(tpl) {
-  const list = { id: uid(), name: tpl.name, color: tpl.color, emoji: tpl.emoji, type: tpl.type, sort: tpl.type === 'shopping' ? 'manual' : 'manual', created: Date.now() };
-  let name = list.name, i = 2;
-  while (state.lists.some((l) => l.name === name)) name = `${list.name} ${i++}`;
-  list.name = name;
-  state.lists.push(list);
-  addFromText(tpl.items.join('\n'), { listId: list.id });
+/* Template items are either smart-input text (built-in templates) or a saved task:
+   { title, notes, priority, tags, dur, subtasks: [titles], repeat, qty, cat } — no dates, so a template fits any day. */
+function tplItemFromTask(t) {
+  const it = { title: t.title };
+  if (t.notes) it.notes = t.notes;
+  if (t.priority) it.priority = t.priority;
+  if (t.tags.length) it.tags = t.tags.slice();
+  if (t.dur) it.dur = t.dur;
+  if (t.subtasks.length) it.subtasks = t.subtasks.map((x) => x.title);
+  if (t.repeat) it.repeat = clone(t.repeat);
+  if (t.qty) it.qty = t.qty;
+  if (t.cat) it.cat = t.cat;
+  return it;
+}
+const tplItemTitle = (it) => (typeof it === 'string' ? parseQuick(it).title : it.title + (it.qty ? ' ' + it.qty : ''));
+function tplItemMeta(it) {
+  if (typeof it === 'string') { const p = parseQuick(it); return [p.priority ? PRIO[p.priority].name.toLowerCase() + ' приоритет' : '', ...p.tags.map((g) => '#' + g)].filter(Boolean).join(' · '); }
+  return [it.priority ? PRIO[it.priority].name.toLowerCase() + ' приоритет' : '', it.subtasks ? pl(it.subtasks.length, ['подзадача', 'подзадачи', 'подзадач']) : '', it.dur ? fmtDur(it.dur) : '', it.repeat ? repeatLabel(it.repeat).toLowerCase() : '', ...(it.tags || []).map((g) => '#' + g)].filter(Boolean).join(' · ');
+}
+function taskFromTplItem(it, listId, order) {
+  if (typeof it === 'string') return addFromText(it, { listId })[0];
+  const list = listById(listId);
+  const t = newTask({
+    title: it.title, notes: it.notes || '', listId, priority: it.priority || 0, tags: (it.tags || []).slice(), dur: it.dur || 0,
+    subtasks: (it.subtasks || []).map((title) => ({ id: uid(), title, done: false })), repeat: it.repeat ? clone(it.repeat) : null,
+    qty: it.qty || '', cat: it.cat || '', order: order || Date.now(),
+  });
+  if (list.type === 'shopping' && !t.cat) t.cat = categorize(t.title);
+  if (t.repeat) t.date = firstDate(t.repeat, todayKey());
+  state.tasks.push(t);
+  return t;
+}
+/* Fill a list from a template: a new list named after it, or an existing list (targetId). */
+function createFromTemplate(tpl, targetId) {
+  let list = targetId ? state.lists.find((l) => l.id === targetId) : null;
+  if (!list) {
+    list = { id: uid(), name: tpl.name, color: tpl.color || LIST_COLORS[0], emoji: tpl.emoji || '📋', type: tpl.type || 'tasks', sort: 'manual', created: Date.now() };
+    let name = list.name, i = 2;
+    while (state.lists.some((l) => l.name === name)) name = `${list.name} ${i++}`;
+    list.name = name;
+    state.lists.push(list);
+  }
+  const base = Date.now();
+  tpl.items.forEach((it, i) => taskFromTplItem(it, list.id, base + i));
   return list;
+}
+/* Add tasks to a user template; tasks already in it (same title) are skipped. */
+function addTasksToTemplate(tpl, tasks) {
+  const have = new Set(tpl.items.map((it) => tplItemTitle(it).toLowerCase()));
+  let n = 0;
+  tasks.forEach((t) => {
+    const it = tplItemFromTask(t);
+    if (have.has(tplItemTitle(it).toLowerCase())) return;
+    tpl.items.push(it); have.add(tplItemTitle(it).toLowerCase()); n++;
+  });
+  return n;
 }
 
 /* ---------- habits ---------- */
